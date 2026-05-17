@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { BotState, BotSettings, ProfitStep, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, DEFAULT_STEPS, BotNotification, Trade } from '@/lib/types'
+import { BotState, BotSettings, ProfitStep, ScannedCoin, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, DEFAULT_STEPS, BotNotification, Trade } from '@/lib/types'
 
 // ============================================
 // Status Badge
@@ -154,13 +154,88 @@ function Notifications({ notifications }: { notifications: BotNotification[] }) 
 }
 
 // ============================================
+// Scanner Tab — shows what coins the bot sees
+// ============================================
+function ScannerView({ coins, onScan }: { coins: ScannedCoin[]; onScan: () => void }) {
+  if (coins.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-potato-muted/50 text-sm mb-3">No scan data yet</p>
+        <button
+          onClick={onScan}
+          className="px-4 py-2 rounded-lg bg-potato-accent text-white text-sm hover:bg-potato-accent-dim transition"
+        >
+          Scan Now
+        </button>
+      </div>
+    )
+  }
+
+  const qualifiedCount = coins.filter((c) => c.qualified).length
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-potato-muted text-xs">
+          {qualifiedCount} qualified / {coins.length} scanned
+        </p>
+        <button
+          onClick={onScan}
+          className="px-3 py-1 rounded-lg bg-potato-surface-2 border border-potato-border text-potato-muted text-xs hover:text-potato-accent hover:border-potato-accent/50 transition"
+        >
+          Refresh
+        </button>
+      </div>
+      <div className="space-y-1.5 max-h-80 overflow-y-auto">
+        {coins.slice(0, 50).map((coin) => (
+          <div
+            key={coin.id}
+            className={`flex items-center justify-between rounded-lg p-3 border text-sm ${
+              coin.qualified
+                ? 'bg-potato-green/5 border-potato-green/20'
+                : 'bg-potato-surface border-potato-border'
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                coin.qualified
+                  ? 'bg-potato-green/20 text-potato-green'
+                  : 'bg-potato-surface-2 text-potato-muted'
+              }`}>
+                {coin.symbol}
+              </span>
+              <div className="min-w-0">
+                <p className="text-potato-text text-sm truncate">{coin.name}</p>
+                <p className="text-potato-muted text-[10px]">
+                  ${coin.currentPrice < 1 ? coin.currentPrice.toFixed(6) : coin.currentPrice.toFixed(2)}
+                  {' · '}Vol ${(coin.volume24h / 1_000_000).toFixed(1)}M
+                </p>
+              </div>
+            </div>
+            <div className="text-right shrink-0 ml-2">
+              {coin.qualified ? (
+                <div>
+                  <p className="text-potato-green text-xs font-medium">+{coin.momentumScore.toFixed(2)}%</p>
+                  <p className="text-potato-muted text-[10px]">momentum</p>
+                </div>
+              ) : (
+                <p className="text-potato-muted text-[10px] max-w-[140px] text-right">{coin.rejectionReason}</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
 // Profit Ladder Visual
 // ============================================
 function ProfitLadder({ state }: { state: BotState }) {
   const totalSafe = state.seedAmount + state.lockedProfits
   const isStepUp = state.settings.ladderMode === 'step-up'
 
-  // Figure out current target for display
   let currentTarget: number
   let currentLock: number
   if (isStepUp && state.settings.steps.length > 0) {
@@ -173,7 +248,6 @@ function ProfitLadder({ state }: { state: BotState }) {
     currentLock = state.settings.simpleLockAmount
   }
 
-  // Count locked segments
   const segments = currentLock > 0 ? Math.floor(state.lockedProfits / currentLock) : 0
 
   return (
@@ -254,9 +328,6 @@ function SettingRow({
 }
 
 // ============================================
-// Settings Panel
-// ============================================
-// ============================================
 // Step Editor Row
 // ============================================
 function StepRow({
@@ -323,6 +394,36 @@ function StepRow({
 }
 
 // ============================================
+// Common coin list for the watchlist picker
+// ============================================
+const POPULAR_COINS = [
+  { id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
+  { id: 'ethereum', symbol: 'ETH', name: 'Ethereum' },
+  { id: 'solana', symbol: 'SOL', name: 'Solana' },
+  { id: 'dogecoin', symbol: 'DOGE', name: 'Dogecoin' },
+  { id: 'ripple', symbol: 'XRP', name: 'XRP' },
+  { id: 'cardano', symbol: 'ADA', name: 'Cardano' },
+  { id: 'avalanche-2', symbol: 'AVAX', name: 'Avalanche' },
+  { id: 'polkadot', symbol: 'DOT', name: 'Polkadot' },
+  { id: 'chainlink', symbol: 'LINK', name: 'Chainlink' },
+  { id: 'polygon-ecosystem-token', symbol: 'POL', name: 'Polygon' },
+  { id: 'shiba-inu', symbol: 'SHIB', name: 'Shiba Inu' },
+  { id: 'litecoin', symbol: 'LTC', name: 'Litecoin' },
+  { id: 'uniswap', symbol: 'UNI', name: 'Uniswap' },
+  { id: 'near', symbol: 'NEAR', name: 'NEAR Protocol' },
+  { id: 'pepe', symbol: 'PEPE', name: 'Pepe' },
+  { id: 'bonk', symbol: 'BONK', name: 'Bonk' },
+  { id: 'sui', symbol: 'SUI', name: 'Sui' },
+  { id: 'aptos', symbol: 'APT', name: 'Aptos' },
+  { id: 'render-token', symbol: 'RNDR', name: 'Render' },
+  { id: 'arbitrum', symbol: 'ARB', name: 'Arbitrum' },
+  { id: 'optimism', symbol: 'OP', name: 'Optimism' },
+  { id: 'injective-protocol', symbol: 'INJ', name: 'Injective' },
+  { id: 'the-graph', symbol: 'GRT', name: 'The Graph' },
+  { id: 'floki', symbol: 'FLOKI', name: 'Floki' },
+]
+
+// ============================================
 // Settings Panel
 // ============================================
 function SettingsPanel({
@@ -334,11 +435,12 @@ function SettingsPanel({
   onSave: (s: BotSettings) => void
   disabled: boolean
 }) {
-  const [draft, setDraft] = useState<BotSettings>({ ...settings, steps: settings.steps.map(s => ({...s})) })
+  const [draft, setDraft] = useState<BotSettings>({ ...settings, steps: settings.steps.map(s => ({...s})), watchlist: [...settings.watchlist] })
   const [dirty, setDirty] = useState(false)
+  const [coinSearch, setCoinSearch] = useState('')
 
   useEffect(() => {
-    setDraft({ ...settings, steps: settings.steps.map(s => ({...s})) })
+    setDraft({ ...settings, steps: settings.steps.map(s => ({...s})), watchlist: [...settings.watchlist] })
     setDirty(false)
   }, [settings])
 
@@ -372,15 +474,47 @@ function SettingsPanel({
     setDirty(true)
   }
 
+  const addToWatchlist = (coinId: string) => {
+    if (!draft.watchlist.includes(coinId)) {
+      setDraft((prev) => ({ ...prev, watchlist: [...prev.watchlist, coinId] }))
+      setDirty(true)
+    }
+    setCoinSearch('')
+  }
+
+  const removeFromWatchlist = (coinId: string) => {
+    setDraft((prev) => ({ ...prev, watchlist: prev.watchlist.filter((id) => id !== coinId) }))
+    setDirty(true)
+  }
+
+  const addCustomCoin = () => {
+    const id = coinSearch.trim().toLowerCase().replace(/\s+/g, '-')
+    if (id && !draft.watchlist.includes(id)) {
+      setDraft((prev) => ({ ...prev, watchlist: [...prev.watchlist, id] }))
+      setDirty(true)
+    }
+    setCoinSearch('')
+  }
+
   const handleSave = () => {
     onSave(draft)
     setDirty(false)
   }
 
   const handleReset = () => {
-    setDraft({ ...DEFAULT_SETTINGS, steps: DEFAULT_STEPS.map(s => ({...s})) })
+    setDraft({ ...DEFAULT_SETTINGS, steps: DEFAULT_STEPS.map(s => ({...s})), watchlist: [] })
     setDirty(true)
   }
+
+  // Filter popular coins for search
+  const filteredCoins = coinSearch.length > 0
+    ? POPULAR_COINS.filter(
+        (c) =>
+          !draft.watchlist.includes(c.id) &&
+          (c.symbol.toLowerCase().includes(coinSearch.toLowerCase()) ||
+           c.name.toLowerCase().includes(coinSearch.toLowerCase()))
+      )
+    : []
 
   return (
     <div className="bg-potato-surface rounded-xl border border-potato-border overflow-hidden">
@@ -416,6 +550,116 @@ function SettingsPanel({
               The bot will place real buy/sell orders on Coinbase using your API keys.
               Make sure you have USD in your Coinbase account and your API keys are set in Vercel environment variables.
             </p>
+          </div>
+        )}
+      </div>
+
+      {/* Section: Watch Mode */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-3 uppercase tracking-wider">Coin Selection</p>
+        <div className="flex gap-1 bg-potato-surface-2 rounded-lg p-1 mb-3">
+          <button
+            onClick={() => { update('watchMode', 'market'); }}
+            className={`flex-1 py-2 rounded-md text-xs font-medium transition ${
+              draft.watchMode === 'market'
+                ? 'bg-potato-accent text-white'
+                : 'text-potato-muted hover:text-potato-text'
+            }`}
+          >
+            Full Market (Top 100)
+          </button>
+          <button
+            onClick={() => { update('watchMode', 'watchlist'); }}
+            className={`flex-1 py-2 rounded-md text-xs font-medium transition ${
+              draft.watchMode === 'watchlist'
+                ? 'bg-potato-accent text-white'
+                : 'text-potato-muted hover:text-potato-text'
+            }`}
+          >
+            My Watchlist
+          </button>
+        </div>
+
+        {draft.watchMode === 'market' ? (
+          <p className="text-potato-muted text-xs">
+            Scans the top 100 coins by volume. The bot picks the best opportunity from the whole market.
+          </p>
+        ) : (
+          <div>
+            <p className="text-potato-muted text-xs mb-3">
+              Only scans coins you pick. The bot will only trade these coins.
+            </p>
+
+            {/* Current watchlist */}
+            {draft.watchlist.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {draft.watchlist.map((coinId) => {
+                  const known = POPULAR_COINS.find((c) => c.id === coinId)
+                  return (
+                    <span
+                      key={coinId}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-potato-accent/15 border border-potato-accent/30 text-potato-accent text-xs"
+                    >
+                      {known ? known.symbol : coinId}
+                      <button
+                        onClick={() => removeFromWatchlist(coinId)}
+                        className="text-potato-accent/60 hover:text-potato-red ml-0.5"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Search to add coins */}
+            <div className="relative">
+              <input
+                type="text"
+                value={coinSearch}
+                onChange={(e) => setCoinSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && filteredCoins.length > 0) {
+                    addToWatchlist(filteredCoins[0].id)
+                  } else if (e.key === 'Enter' && coinSearch.trim()) {
+                    addCustomCoin()
+                  }
+                }}
+                placeholder="Search coins to add (e.g. BTC, Solana)..."
+                className="w-full bg-potato-surface-2 border border-potato-border rounded-lg px-3 py-2 text-sm text-potato-text placeholder-potato-muted/50 focus:border-potato-accent focus:outline-none"
+              />
+              {filteredCoins.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-potato-surface-2 border border-potato-border rounded-lg overflow-hidden z-10 max-h-40 overflow-y-auto">
+                  {filteredCoins.slice(0, 8).map((coin) => (
+                    <button
+                      key={coin.id}
+                      onClick={() => addToWatchlist(coin.id)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-potato-text hover:bg-potato-accent/10 transition text-left"
+                    >
+                      <span className="text-potato-accent font-medium text-xs w-12">{coin.symbol}</span>
+                      <span className="text-potato-muted text-xs">{coin.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {coinSearch.length > 0 && filteredCoins.length === 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-potato-surface-2 border border-potato-border rounded-lg overflow-hidden z-10">
+                  <button
+                    onClick={addCustomCoin}
+                    className="w-full px-3 py-2 text-sm text-potato-muted hover:bg-potato-accent/10 transition text-left"
+                  >
+                    Add &quot;{coinSearch.trim().toLowerCase()}&quot; as custom coin ID
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {draft.watchlist.length === 0 && (
+              <p className="text-potato-muted/50 text-xs mt-2">
+                Add at least one coin to use watchlist mode.
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -458,7 +702,6 @@ function SettingsPanel({
       <div className="p-4 border-b border-potato-border/30">
         <p className="text-potato-accent text-xs font-medium mb-3 uppercase tracking-wider">Profit Ladder</p>
 
-        {/* Mode toggle */}
         <div className="flex gap-1 bg-potato-surface-2 rounded-lg p-1 mb-4">
           <button
             onClick={() => { update('ladderMode', 'simple'); }}
@@ -684,15 +927,19 @@ function SettingsPanel({
 // ============================================
 export default function Dashboard() {
   const [state, setState] = useState<BotState>(DEFAULT_BOT_STATE)
+  const [scanResults, setScanResults] = useState<ScannedCoin[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'trades' | 'notifications' | 'settings'>('trades')
+  const [activeTab, setActiveTab] = useState<'scanner' | 'trades' | 'notifications' | 'settings'>('scanner')
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Load initial state
   useEffect(() => {
     fetch('/api/bot')
       .then((r) => r.json())
-      .then((d) => setState(d.state))
+      .then((d) => {
+        setState(d.state)
+        if (d.scanResults) setScanResults(d.scanResults)
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -708,6 +955,7 @@ export default function Dashboard() {
         if (res.ok) {
           const data = await res.json()
           setState(data.state)
+          if (data.scanResults) setScanResults(data.scanResults)
         }
       }, state.settings.scanIntervalMs)
     }
@@ -725,11 +973,16 @@ export default function Dashboard() {
     if (res.ok) {
       const data = await res.json()
       setState(data.state)
+      if (data.scanResults) setScanResults(data.scanResults)
     }
   }, [])
 
   const saveSettings = useCallback(async (newSettings: BotSettings) => {
     await sendAction('settings', { settings: newSettings })
+  }, [sendAction])
+
+  const manualScan = useCallback(async () => {
+    await sendAction('scan')
   }, [sendAction])
 
   if (loading) {
@@ -751,6 +1004,11 @@ export default function Dashboard() {
             <span className={state.settings.tradingMode === 'live' ? 'text-potato-red font-medium' : ''}>
               {state.settings.tradingMode === 'live' ? '🔴 LIVE' : 'Paper'} mode
             </span>
+            {' · '}
+            {state.settings.watchMode === 'watchlist'
+              ? `Watching ${state.settings.watchlist.length} coin${state.settings.watchlist.length !== 1 ? 's' : ''}`
+              : 'Full market'
+            }
           </p>
         </div>
         <StatusBadge status={state.status} isLive={state.settings.tradingMode === 'live'} />
@@ -835,6 +1093,16 @@ export default function Dashboard() {
       {/* Tabs */}
       <div className="flex gap-1 bg-potato-surface rounded-xl p-1 mb-4">
         <button
+          onClick={() => setActiveTab('scanner')}
+          className={`flex-1 py-2 rounded-lg text-sm transition ${
+            activeTab === 'scanner'
+              ? 'bg-potato-surface-2 text-potato-text'
+              : 'text-potato-muted hover:text-potato-text'
+          }`}
+        >
+          Scanner
+        </button>
+        <button
           onClick={() => setActiveTab('trades')}
           className={`flex-1 py-2 rounded-lg text-sm transition ${
             activeTab === 'trades'
@@ -852,7 +1120,7 @@ export default function Dashboard() {
               : 'text-potato-muted hover:text-potato-text'
           }`}
         >
-          Notifications ({state.notifications.filter((n) => !n.read).length})
+          Alerts ({state.notifications.filter((n) => !n.read).length})
         </button>
         <button
           onClick={() => setActiveTab('settings')}
@@ -867,7 +1135,9 @@ export default function Dashboard() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'trades' ? (
+      {activeTab === 'scanner' ? (
+        <ScannerView coins={scanResults} onScan={manualScan} />
+      ) : activeTab === 'trades' ? (
         <TradeHistory trades={state.trades} />
       ) : activeTab === 'notifications' ? (
         <Notifications notifications={state.notifications} />

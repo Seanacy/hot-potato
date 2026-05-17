@@ -67,6 +67,10 @@ export interface BotSettings {
   // Step-up profit ladder
   steps: ProfitStep[]         // the step-up rules
 
+  // Watchlist
+  watchMode: 'market' | 'watchlist'  // scan everything or just specific coins
+  watchlist: string[]                // coin IDs to watch (e.g. ['bitcoin', 'ethereum'])
+
   // Scanner
   scanIntervalMs: number      // how often to scan (ms)
   trendWindowSec: number      // look at last N seconds for trend
@@ -94,6 +98,8 @@ export const DEFAULT_SETTINGS: BotSettings = {
   simpleProfitTarget: 5,
   simpleLockAmount: 2.5,
   steps: [...DEFAULT_STEPS],
+  watchMode: 'market',
+  watchlist: [],
   scanIntervalMs: 5000,
   trendWindowSec: 90,
   minTrendSec: 30,
@@ -147,8 +153,22 @@ export interface BotNotification {
   read: boolean
 }
 
+export interface ScannedCoin {
+  id: string
+  symbol: string
+  name: string
+  currentPrice: number
+  volume24h: number
+  priceChangePercent1h: number
+  momentumScore: number
+  stabilityScore: number
+  qualified: boolean
+  rejectionReason: string | null  // why it was filtered out (null if qualified)
+}
+
 export interface ScanResult {
   topCoins: CoinData[]
+  allScanned: ScannedCoin[]       // every coin that was checked, with reasons
   bestOpportunity: CoinData | null
   scannedAt: number
   totalScanned: number
