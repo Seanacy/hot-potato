@@ -1,15 +1,15 @@
 // Hot Potato — Trading Engine
 // Handles all buy/sell decisions, money management, profit ladder
+// ALL thresholds come from state.settings (user-configurable)
 
 import { BotState, Trade, BotNotification, CoinData } from './types'
-import { TRADE_FEE_PERCENT, FEE_MULTIPLIER, PROFIT_THRESHOLD } from './constants'
 import { scanMarket, shouldBail } from './scanner'
 
 // ============================================
-// Calculate trade fee
+// Calculate trade fee (uses settings)
 // ============================================
-function calcFee(amount: number): number {
-  return amount * TRADE_FEE_PERCENT
+function calcFee(amount: number, feePercent: number): number {
+  return amount * feePercent
 }
 
 // ============================================
@@ -43,7 +43,7 @@ function recordTrade(
   amount: number,
   reason: string
 ): Trade {
-  const fee = calcFee(amount)
+  const fee = calcFee(amount, state.settings.tradeFeePercent)
   const trade: Trade = {
     id: `trade-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     type,
@@ -65,7 +65,7 @@ function recordTrade(
 // ============================================
 function buyCoin(state: BotState, coin: CoinData, reason: string): BotState {
   const amount = state.tradingBalance
-  const fee = calcFee(amount)
+  const fee = calcFee(amount, state.settings.tradeFeePercent)
   const netAmount = amount - fee
 
   recordTrade(state, 'buy', coin.id, coin.symbol, coin.currentPrice, amount, reason)
@@ -87,7 +87,7 @@ function sellCoin(state: BotState, currentPrice: number, reason: string): BotSta
 
   const priceChange = (currentPrice - state.buyPrice) / state.buyPrice
   const saleValue = state.tradingBalance * (1 + priceChange)
-  const fee = calcFee(saleValue)
+  const fee = calcFee(saleValue, state.settings.tradeFeePercent)
   const netValue = saleValue - fee
   const profit = netValue - state.tradingBalance
 
@@ -114,14 +114,14 @@ function sellCoin(state: BotState, currentPrice: number, reason: string): BotSta
 // Check and apply profit ladder rules
 // ============================================
 function checkProfitLadder(state: BotState): BotState {
-  // Check if we hit the profit threshold for locking
-  if (state.profitSinceLastLock >= PROFIT_THRESHOLD) {
-    const lockAmount = PROFIT_THRESHOLD
+  const threshold = state.settings.profitThreshold
+
+  if (state.profitSinceLastLock >= threshold) {
+    const lockAmount = threshold
     state.lockedProfits += lockAmount
     state.tradingBalance -= lockAmount
     state.profitSinceLastLock = 0
 
-    // Switch to profit-only mode after first lock
     if (state.mode === 'growth') {
       state.mode = 'profit-only'
       notify(state, 'profit_locked',
@@ -160,20 +160,19 @@ function shouldJump(
     return { jump: true, reason: 'Not holding anything — buy the best opportunity' }
   }
 
-  // Don't jump to the same coin
   if (bestCoin.id === state.currentCoin) {
     return { jump: false, reason: 'Already holding the best coin' }
   }
 
-  // Calculate if jumping is worth it (profit must be >= 2x fees)
-  const jumpFee = calcFee(state.tradingBalance) * 2 // sell fee + buy fee
-  const expectedGain = state.tradingBalance * (bestCoin.momentumScore / 100) * 0.5 // conservative estimate
+  const feePercent = state.settings.tradeFeePercent
+  const feeMultiplier = state.settings.feeMultiplier
+  const jumpFee = calcFee(state.tradingBalance, feePercent) * 2
+  const expectedGain = state.tradingBalance * (bestCoin.momentumScore / 100) * 0.5
 
-  if (expectedGain < jumpFee * FEE_MULTIPLIER) {
-    return { jump: false, reason: `Jump profit ($${expectedGain.toFixed(4)}) not worth 2x fees ($${(jumpFee * FEE_MULTIPLIER).toFixed(4)})` }
+  if (expectedGain < jumpFee * feeMultiplier) {
+    return { jump: false, reason: `Jump profit ($${expectedGain.toFixed(4)}) not worth ${feeMultiplier}x fees ($${(jumpFee * feeMultiplier).toFixed(4)})` }
   }
 
-  // The new coin must have significantly better momentum
   return { jump: true, reason: `Better momentum: ${bestCoin.symbol} (${bestCoin.momentumScore.toFixed(2)}%)` }
 }
 
@@ -183,8 +182,8 @@ function shouldJump(
 export async function tick(state: BotState): Promise<BotState> {
   if (state.status !== 'running') return state
 
-  // 1. Scan the market
-  const scan = await scanMarket()
+  // 1. Scan the market (pass settings so scanner uses user's values)
+  const scan = await scanMarket(state.settings)
   state.lastScanTime = scan.scannedAt
 
   // 2. If we're holding a coin, check if we should bail
@@ -192,7 +191,7 @@ export async function tick(state: BotState): Promise<BotState> {
     const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
 
     if (heldCoin) {
-      const bailCheck = shouldBail(heldCoin, state.buyPrice || 0)
+      const bailCheck = shouldBail(heldCoin, state.buyPrice || 0, state.settings)
       if (bailCheck.bail) {
         state = sellCoin(state, heldCoin.currentPrice, bailCheck.reason)
         state = checkProfitLadder(state)
@@ -200,9 +199,7 @@ export async function tick(state: BotState): Promise<BotState> {
         if (state.status === 'paused') return state
       }
     } else {
-      // Coin fell off the qualified list — sell it
-      // Use the last known price from any scan data
-      const anyData = scan.topCoins[0] // fallback
+      const anyData = scan.topCoins[0]
       if (anyData && state.buyPrice) {
         state = sellCoin(state, state.buyPrice * 0.998, 'Coin no longer qualifies — bailing')
         state = checkProfitLadder(state)
@@ -221,7 +218,6 @@ export async function tick(state: BotState): Promise<BotState> {
   if (state.currentCoin && scan.bestOpportunity) {
     const jumpCheck = shouldJump(state, scan.bestOpportunity)
     if (jumpCheck.jump && scan.bestOpportunity.id !== state.currentCoin) {
-      // Sell current
       const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
       if (heldCoin) {
         state = sellCoin(state, heldCoin.currentPrice, 'Jumping to better opportunity')
@@ -229,7 +225,6 @@ export async function tick(state: BotState): Promise<BotState> {
         state = checkZeroOut(state)
         if (state.status === 'paused') return state
       }
-      // Buy new
       state = buyCoin(state, scan.bestOpportunity, jumpCheck.reason)
     }
   }
@@ -260,15 +255,16 @@ export function pauseBot(state: BotState): BotState {
 // RESTART the bot after zero-out
 // ============================================
 export function restartBot(state: BotState): BotState {
-  // Pull from locked profits to restart
-  if (state.lockedProfits >= PROFIT_THRESHOLD) {
-    state.lockedProfits -= PROFIT_THRESHOLD
-    state.tradingBalance = PROFIT_THRESHOLD
+  const threshold = state.settings.profitThreshold
+
+  if (state.lockedProfits >= threshold) {
+    state.lockedProfits -= threshold
+    state.tradingBalance = threshold
     state.status = 'running'
     state.profitSinceLastLock = 0
-    notify(state, 'info', `Restarted with $${PROFIT_THRESHOLD} from locked profits. Remaining safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
+    notify(state, 'info', `Restarted with $${threshold} from locked profits. Remaining safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
   } else {
-    notify(state, 'info', 'Not enough locked profits to restart. Need at least $' + PROFIT_THRESHOLD)
+    notify(state, 'info', 'Not enough locked profits to restart. Need at least $' + threshold)
   }
   return state
 }

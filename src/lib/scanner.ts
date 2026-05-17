@@ -1,22 +1,13 @@
 // Hot Potato — Market Scanner
 // Scans all coins, finds the ones with steady upward momentum
+// ALL thresholds come from BotSettings (user-configurable)
 
-import { CoinData, PricePoint, ScanResult } from './types'
-import {
-  COINGECKO_API,
-  MAX_COINS_TO_WATCH,
-  MIN_VOLUME_USD,
-  TREND_WINDOW_SEC,
-  MIN_TREND_SEC,
-  MAX_SPIKE_PERCENT,
-  SPIKE_WINDOW_SEC,
-  MAX_VOLATILITY_RATIO,
-  MIN_PRICE_POINTS,
-} from './constants'
+import { CoinData, PricePoint, ScanResult, BotSettings, DEFAULT_SETTINGS } from './types'
+import { COINGECKO_API, MAX_COINS_TO_WATCH } from './constants'
 
 // In-memory price history cache (for paper trading)
 const priceHistoryCache: Map<string, PricePoint[]> = new Map()
-const MAX_HISTORY_POINTS = 120 // keep ~2 minutes of data at 1 point/sec
+const MAX_HISTORY_POINTS = 120
 
 // ============================================
 // Fetch market data from CoinGecko (free API)
@@ -44,12 +35,10 @@ export async function fetchMarketData(): Promise<CoinData[]> {
       total_volume: number
       price_change_percentage_1h_in_currency: number | null
     }) => {
-      // Update price history cache
       const historyKey = coin.id
       const existing = priceHistoryCache.get(historyKey) || []
       existing.push({ price: coin.current_price, timestamp: now })
 
-      // Trim old data
       const cutoff = now - (MAX_HISTORY_POINTS * 1000)
       const trimmed = existing.filter((p) => p.timestamp > cutoff)
       priceHistoryCache.set(historyKey, trimmed)
@@ -76,47 +65,40 @@ export async function fetchMarketData(): Promise<CoinData[]> {
 }
 
 // ============================================
-// Analyze a coin's trend quality
+// Analyze a coin's trend quality (uses settings)
 // ============================================
-export function analyzeCoin(coin: CoinData): CoinData {
+export function analyzeCoin(coin: CoinData, settings: BotSettings): CoinData {
   const now = Date.now()
-  const windowStart = now - (TREND_WINDOW_SEC * 1000)
+  const windowStart = now - (settings.trendWindowSec * 1000)
   const recentPrices = coin.priceHistory.filter((p) => p.timestamp >= windowStart)
 
-  // Not enough data points yet
-  if (recentPrices.length < MIN_PRICE_POINTS) {
+  if (recentPrices.length < settings.minPricePoints) {
     return { ...coin, momentumScore: 0, stabilityScore: 0, qualified: false }
   }
 
-  // Check volume filter
-  if (coin.volume24h < MIN_VOLUME_USD) {
+  if (coin.volume24h < settings.minVolumeUsd) {
     return { ...coin, momentumScore: 0, stabilityScore: 0, qualified: false }
   }
 
-  // Calculate momentum (overall price change in the window)
   const oldestPrice = recentPrices[0].price
   const newestPrice = recentPrices[recentPrices.length - 1].price
   const priceChange = ((newestPrice - oldestPrice) / oldestPrice) * 100
 
-  // Must be positive (going up)
   if (priceChange <= 0) {
     return { ...coin, momentumScore: 0, stabilityScore: 0, qualified: false }
   }
 
-  // Check for spike rejection
-  if (hasSpike(recentPrices)) {
+  if (hasSpike(recentPrices, settings)) {
     return { ...coin, momentumScore: priceChange, stabilityScore: 0, qualified: false }
   }
 
-  // Check trend stability
   const stability = calculateStability(recentPrices)
-  if (stability > MAX_VOLATILITY_RATIO) {
+  if (stability > settings.maxVolatilityRatio) {
     return { ...coin, momentumScore: priceChange, stabilityScore: stability, qualified: false }
   }
 
-  // Check minimum trend duration
   const trendDuration = (recentPrices[recentPrices.length - 1].timestamp - recentPrices[0].timestamp) / 1000
-  if (trendDuration < MIN_TREND_SEC) {
+  if (trendDuration < settings.minTrendSec) {
     return { ...coin, momentumScore: priceChange, stabilityScore: stability, qualified: false }
   }
 
@@ -131,15 +113,15 @@ export function analyzeCoin(coin: CoinData): CoinData {
 // ============================================
 // Spike detection — reject pump & dump coins
 // ============================================
-function hasSpike(prices: PricePoint[]): boolean {
+function hasSpike(prices: PricePoint[], settings: BotSettings): boolean {
   for (let i = 1; i < prices.length; i++) {
     const timeDiff = (prices[i].timestamp - prices[i - 1].timestamp) / 1000
-    if (timeDiff <= SPIKE_WINDOW_SEC && timeDiff > 0) {
+    if (timeDiff <= settings.spikeWindowSec && timeDiff > 0) {
       const change = Math.abs(
         ((prices[i].price - prices[i - 1].price) / prices[i - 1].price) * 100
       )
-      if (change >= MAX_SPIKE_PERCENT) {
-        return true // sudden spike detected
+      if (change >= settings.maxSpikePercent) {
+        return true
       }
     }
   }
@@ -148,7 +130,6 @@ function hasSpike(prices: PricePoint[]): boolean {
 
 // ============================================
 // Stability score — ratio of down moves to up moves
-// Lower = more stable uptrend
 // ============================================
 function calculateStability(prices: PricePoint[]): number {
   let upMoves = 0
@@ -160,16 +141,17 @@ function calculateStability(prices: PricePoint[]): number {
     else if (diff < 0) downMoves++
   }
 
-  if (upMoves === 0) return 1 // no up moves = not stable
+  if (upMoves === 0) return 1
   return downMoves / upMoves
 }
 
 // ============================================
 // Full market scan — returns ranked opportunities
 // ============================================
-export async function scanMarket(): Promise<ScanResult> {
+export async function scanMarket(settings?: BotSettings): Promise<ScanResult> {
+  const s = settings || DEFAULT_SETTINGS
   const rawCoins = await fetchMarketData()
-  const analyzed = rawCoins.map(analyzeCoin)
+  const analyzed = rawCoins.map((c) => analyzeCoin(c, s))
   const qualified = analyzed
     .filter((c) => c.qualified)
     .sort((a, b) => b.momentumScore - a.momentumScore)
@@ -183,38 +165,35 @@ export async function scanMarket(): Promise<ScanResult> {
 }
 
 // ============================================
-// Check if current coin should be abandoned
+// Check if current coin should be abandoned (uses settings)
 // ============================================
-export function shouldBail(coin: CoinData, buyPrice: number): { bail: boolean; reason: string } {
+export function shouldBail(coin: CoinData, buyPrice: number, settings?: BotSettings): { bail: boolean; reason: string } {
+  const s = settings || DEFAULT_SETTINGS
   const now = Date.now()
-  const recentWindow = 15000 // last 15 seconds
+  const recentWindow = 15000
   const recentPrices = coin.priceHistory.filter((p) => p.timestamp >= now - recentWindow)
 
   if (recentPrices.length < 3) {
     return { bail: false, reason: 'Not enough recent data' }
   }
 
-  // Check if price is falling from our buy price
   const currentPrice = recentPrices[recentPrices.length - 1].price
   const changeFromBuy = ((currentPrice - buyPrice) / buyPrice) * 100
 
-  // If we're down more than 0.5% from buy, bail
-  if (changeFromBuy < -0.5) {
+  if (changeFromBuy < -s.bailPercent) {
     return { bail: true, reason: `Price dropped ${changeFromBuy.toFixed(2)}% from buy price` }
   }
 
-  // Check if price is stagnant (barely moving in last 15 seconds)
   const oldest = recentPrices[0].price
   const newest = recentPrices[recentPrices.length - 1].price
   const recentChange = Math.abs(((newest - oldest) / oldest) * 100)
 
-  if (recentChange < 0.02) {
+  if (recentChange < s.stagnantThreshold) {
     return { bail: true, reason: 'Coin is stagnant — not moving' }
   }
 
-  // Check if trend reversed (going down in recent window)
   const recentTrend = ((newest - oldest) / oldest) * 100
-  if (recentTrend < -0.1) {
+  if (recentTrend < -s.reversalThreshold) {
     return { bail: true, reason: 'Trend reversed — price dropping' }
   }
 

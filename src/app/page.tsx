@@ -1,8 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { BotState, DEFAULT_BOT_STATE, BotNotification, Trade } from '@/lib/types'
-import { SCAN_INTERVAL_MS, SEED_AMOUNT, PROFIT_THRESHOLD } from '@/lib/constants'
+import { BotState, BotSettings, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, BotNotification, Trade } from '@/lib/types'
 
 // ============================================
 // Status Badge
@@ -152,23 +151,21 @@ function Notifications({ notifications }: { notifications: BotNotification[] }) 
 // ============================================
 function ProfitLadder({ state }: { state: BotState }) {
   const totalSafe = state.seedAmount + state.lockedProfits
-  const segments = Math.floor(state.lockedProfits / PROFIT_THRESHOLD)
+  const threshold = state.settings.profitThreshold
+  const segments = Math.floor(state.lockedProfits / threshold)
 
   return (
     <div className="bg-potato-surface rounded-xl p-5 border border-potato-border">
       <p className="text-potato-muted text-xs mb-3">Profit ladder</p>
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Seed */}
         <div className="px-3 py-1.5 rounded-lg bg-potato-accent/20 border border-potato-accent/30 text-potato-accent text-xs font-medium">
           Seed ${state.seedAmount}
         </div>
-        {/* Locked profit segments */}
         {Array.from({ length: segments }).map((_, i) => (
           <div key={i} className="px-3 py-1.5 rounded-lg bg-potato-green/20 border border-potato-green/30 text-potato-green text-xs font-medium">
-            +${PROFIT_THRESHOLD}
+            +${threshold}
           </div>
         ))}
-        {/* Current trading */}
         <div className="px-3 py-1.5 rounded-lg bg-potato-surface-2 border border-potato-border text-potato-text text-xs">
           Trading: ${state.tradingBalance.toFixed(2)}
         </div>
@@ -181,12 +178,284 @@ function ProfitLadder({ state }: { state: BotState }) {
 }
 
 // ============================================
+// Setting Input Row
+// ============================================
+function SettingRow({
+  label,
+  hint,
+  value,
+  onChange,
+  suffix,
+  step,
+  min,
+  max,
+}: {
+  label: string
+  hint: string
+  value: number
+  onChange: (v: number) => void
+  suffix?: string
+  step?: number
+  min?: number
+  max?: number
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2.5 border-b border-potato-border/50 last:border-0">
+      <div className="flex-1 min-w-0">
+        <p className="text-potato-text text-sm">{label}</p>
+        <p className="text-potato-muted text-xs">{hint}</p>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          step={step || 1}
+          min={min}
+          max={max}
+          className="w-24 bg-potato-surface-2 border border-potato-border rounded-lg px-3 py-1.5 text-sm text-potato-text text-right focus:border-potato-accent focus:outline-none"
+        />
+        {suffix && <span className="text-potato-muted text-xs w-8">{suffix}</span>}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// Settings Panel
+// ============================================
+function SettingsPanel({
+  settings,
+  onSave,
+  disabled,
+}: {
+  settings: BotSettings
+  onSave: (s: BotSettings) => void
+  disabled: boolean
+}) {
+  const [draft, setDraft] = useState<BotSettings>({ ...settings })
+  const [dirty, setDirty] = useState(false)
+
+  // Sync draft if settings change from outside
+  useEffect(() => {
+    setDraft({ ...settings })
+    setDirty(false)
+  }, [settings])
+
+  const update = (key: keyof BotSettings, val: number) => {
+    setDraft((prev) => ({ ...prev, [key]: val }))
+    setDirty(true)
+  }
+
+  const handleSave = () => {
+    onSave(draft)
+    setDirty(false)
+  }
+
+  const handleReset = () => {
+    setDraft({ ...DEFAULT_SETTINGS })
+    setDirty(true)
+  }
+
+  return (
+    <div className="bg-potato-surface rounded-xl border border-potato-border overflow-hidden">
+      {/* Section: Money Rules */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-2 uppercase tracking-wider">Money Rules</p>
+        <SettingRow
+          label="Seed Amount"
+          hint="Starting capital"
+          value={draft.seedAmount}
+          onChange={(v) => update('seedAmount', v)}
+          suffix="$"
+          step={1}
+          min={1}
+        />
+        <SettingRow
+          label="Profit Lock Threshold"
+          hint="Lock profits every $X earned"
+          value={draft.profitThreshold}
+          onChange={(v) => update('profitThreshold', v)}
+          suffix="$"
+          step={1}
+          min={1}
+        />
+        <SettingRow
+          label="Trade Fee"
+          hint="Fee per trade (0.006 = 0.6%)"
+          value={draft.tradeFeePercent}
+          onChange={(v) => update('tradeFeePercent', v)}
+          suffix="%"
+          step={0.001}
+          min={0}
+          max={0.1}
+        />
+        <SettingRow
+          label="Fee Multiplier"
+          hint="Only jump if gain >= Nx fees"
+          value={draft.feeMultiplier}
+          onChange={(v) => update('feeMultiplier', v)}
+          suffix="x"
+          step={0.5}
+          min={1}
+          max={10}
+        />
+      </div>
+
+      {/* Section: Scanner Rules */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-2 uppercase tracking-wider">Scanner Rules</p>
+        <SettingRow
+          label="Scan Interval"
+          hint="How often to check the market"
+          value={draft.scanIntervalMs / 1000}
+          onChange={(v) => update('scanIntervalMs', v * 1000)}
+          suffix="sec"
+          step={1}
+          min={3}
+          max={60}
+        />
+        <SettingRow
+          label="Trend Window"
+          hint="Look at last N seconds for trend"
+          value={draft.trendWindowSec}
+          onChange={(v) => update('trendWindowSec', v)}
+          suffix="sec"
+          step={5}
+          min={10}
+          max={300}
+        />
+        <SettingRow
+          label="Min Trend Duration"
+          hint="Coin must be rising for at least N seconds"
+          value={draft.minTrendSec}
+          onChange={(v) => update('minTrendSec', v)}
+          suffix="sec"
+          step={5}
+          min={5}
+          max={120}
+        />
+        <SettingRow
+          label="Min Volume"
+          hint="Ignore coins below this daily volume"
+          value={draft.minVolumeUsd}
+          onChange={(v) => update('minVolumeUsd', v)}
+          suffix="$"
+          step={10000}
+          min={0}
+        />
+      </div>
+
+      {/* Section: Safety Filters */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-2 uppercase tracking-wider">Safety Filters</p>
+        <SettingRow
+          label="Max Spike"
+          hint="Reject if price jumps more than X% too fast"
+          value={draft.maxSpikePercent}
+          onChange={(v) => update('maxSpikePercent', v)}
+          suffix="%"
+          step={0.5}
+          min={1}
+          max={20}
+        />
+        <SettingRow
+          label="Spike Window"
+          hint="Time window for spike detection"
+          value={draft.spikeWindowSec}
+          onChange={(v) => update('spikeWindowSec', v)}
+          suffix="sec"
+          step={1}
+          min={1}
+          max={60}
+        />
+        <SettingRow
+          label="Max Volatility Ratio"
+          hint="Max down/up move ratio (lower = stricter)"
+          value={draft.maxVolatilityRatio}
+          onChange={(v) => update('maxVolatilityRatio', v)}
+          step={0.05}
+          min={0.05}
+          max={1}
+        />
+        <SettingRow
+          label="Min Price Points"
+          hint="Need at least N data points to evaluate"
+          value={draft.minPricePoints}
+          onChange={(v) => update('minPricePoints', v)}
+          step={1}
+          min={2}
+          max={30}
+        />
+      </div>
+
+      {/* Section: Bail Rules */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-2 uppercase tracking-wider">Bail Rules</p>
+        <SettingRow
+          label="Bail Drop"
+          hint="Sell if price drops X% from buy price"
+          value={draft.bailPercent}
+          onChange={(v) => update('bailPercent', v)}
+          suffix="%"
+          step={0.1}
+          min={0.1}
+          max={10}
+        />
+        <SettingRow
+          label="Stagnant Threshold"
+          hint="Sell if coin moves less than X%"
+          value={draft.stagnantThreshold}
+          onChange={(v) => update('stagnantThreshold', v)}
+          suffix="%"
+          step={0.01}
+          min={0}
+          max={1}
+        />
+        <SettingRow
+          label="Reversal Threshold"
+          hint="Sell if recent trend is below -X%"
+          value={draft.reversalThreshold}
+          onChange={(v) => update('reversalThreshold', v)}
+          suffix="%"
+          step={0.05}
+          min={0.01}
+          max={5}
+        />
+      </div>
+
+      {/* Buttons */}
+      <div className="p-4 flex gap-3">
+        <button
+          onClick={handleSave}
+          disabled={!dirty || disabled}
+          className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition ${
+            dirty && !disabled
+              ? 'bg-potato-accent text-white hover:bg-potato-accent-dim'
+              : 'bg-potato-surface-2 text-potato-muted cursor-not-allowed'
+          }`}
+        >
+          {disabled ? 'Pause bot to change settings' : dirty ? 'Save Settings' : 'Settings saved'}
+        </button>
+        <button
+          onClick={handleReset}
+          disabled={disabled}
+          className="px-4 py-2.5 rounded-xl bg-potato-surface-2 border border-potato-border text-potato-muted text-sm hover:text-potato-red hover:border-potato-red/50 transition disabled:opacity-50"
+        >
+          Defaults
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
 // Main Dashboard
 // ============================================
 export default function Dashboard() {
   const [state, setState] = useState<BotState>(DEFAULT_BOT_STATE)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'trades' | 'notifications'>('trades')
+  const [activeTab, setActiveTab] = useState<'trades' | 'notifications' | 'settings'>('trades')
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Load initial state
@@ -197,7 +466,7 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
   }, [])
 
-  // Auto-tick when running
+  // Auto-tick when running (use settings interval)
   useEffect(() => {
     if (state.status === 'running') {
       tickRef.current = setInterval(async () => {
@@ -210,24 +479,28 @@ export default function Dashboard() {
           const data = await res.json()
           setState(data.state)
         }
-      }, SCAN_INTERVAL_MS)
+      }, state.settings.scanIntervalMs)
     }
     return () => {
       if (tickRef.current) clearInterval(tickRef.current)
     }
-  }, [state.status])
+  }, [state.status, state.settings.scanIntervalMs])
 
-  const sendAction = useCallback(async (action: string) => {
+  const sendAction = useCallback(async (action: string, extra?: Record<string, unknown>) => {
     const res = await fetch('/api/bot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, ...extra }),
     })
     if (res.ok) {
       const data = await res.json()
       setState(data.state)
     }
   }, [])
+
+  const saveSettings = useCallback(async (newSettings: BotSettings) => {
+    await sendAction('settings', { settings: newSettings })
+  }, [sendAction])
 
   if (loading) {
     return (
@@ -314,7 +587,7 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="flex gap-4 text-xs text-potato-muted mb-4">
         <span>Trades: {state.totalTrades}</span>
-        <span>Profit to next lock: ${Math.max(0, state.profitSinceLastLock).toFixed(2)} / ${PROFIT_THRESHOLD}</span>
+        <span>Profit to next lock: ${Math.max(0, state.profitSinceLastLock).toFixed(2)} / ${state.settings.profitThreshold}</span>
         {state.lastScanTime > 0 && (
           <span>Last scan: {new Date(state.lastScanTime).toLocaleTimeString()}</span>
         )}
@@ -342,13 +615,29 @@ export default function Dashboard() {
         >
           Notifications ({state.notifications.filter((n) => !n.read).length})
         </button>
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`flex-1 py-2 rounded-lg text-sm transition ${
+            activeTab === 'settings'
+              ? 'bg-potato-surface-2 text-potato-text'
+              : 'text-potato-muted hover:text-potato-text'
+          }`}
+        >
+          Settings
+        </button>
       </div>
 
       {/* Tab Content */}
       {activeTab === 'trades' ? (
         <TradeHistory trades={state.trades} />
-      ) : (
+      ) : activeTab === 'notifications' ? (
         <Notifications notifications={state.notifications} />
+      ) : (
+        <SettingsPanel
+          settings={state.settings}
+          onSave={saveSettings}
+          disabled={state.status === 'running'}
+        />
       )}
     </div>
   )
