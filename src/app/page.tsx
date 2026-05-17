@@ -6,16 +6,23 @@ import { BotState, BotSettings, ProfitStep, DEFAULT_BOT_STATE, DEFAULT_SETTINGS,
 // ============================================
 // Status Badge
 // ============================================
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, isLive }: { status: string; isLive: boolean }) {
   const colors: Record<string, string> = {
     running: 'bg-potato-green/20 text-potato-green border-potato-green/30',
     paused: 'bg-potato-amber/20 text-potato-amber border-potato-amber/30',
     stopped: 'bg-potato-muted/20 text-potato-muted border-potato-muted/30',
   }
   return (
-    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${colors[status] || colors.stopped}`}>
-      {status.toUpperCase()}
-    </span>
+    <div className="flex items-center gap-2">
+      {isLive && (
+        <span className="px-2 py-1 rounded-full text-[10px] font-bold border bg-potato-red/20 text-potato-red border-potato-red/30">
+          LIVE
+        </span>
+      )}
+      <span className={`px-3 py-1 rounded-full text-xs font-medium border ${colors[status] || colors.stopped}`}>
+        {status.toUpperCase()}
+      </span>
+    </div>
   )
 }
 
@@ -377,6 +384,42 @@ function SettingsPanel({
 
   return (
     <div className="bg-potato-surface rounded-xl border border-potato-border overflow-hidden">
+      {/* Section: Trading Mode */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-3 uppercase tracking-wider">Trading Mode</p>
+        <div className="flex gap-1 bg-potato-surface-2 rounded-lg p-1 mb-3">
+          <button
+            onClick={() => { update('tradingMode', 'paper'); }}
+            className={`flex-1 py-2 rounded-md text-xs font-medium transition ${
+              draft.tradingMode === 'paper'
+                ? 'bg-potato-green text-white'
+                : 'text-potato-muted hover:text-potato-text'
+            }`}
+          >
+            Paper (Fake $)
+          </button>
+          <button
+            onClick={() => { update('tradingMode', 'live'); }}
+            className={`flex-1 py-2 rounded-md text-xs font-medium transition ${
+              draft.tradingMode === 'live'
+                ? 'bg-potato-red text-white'
+                : 'text-potato-muted hover:text-potato-text'
+            }`}
+          >
+            Live (Real $)
+          </button>
+        </div>
+        {draft.tradingMode === 'live' && (
+          <div className="bg-potato-red/10 border border-potato-red/30 rounded-lg p-3 text-xs">
+            <p className="text-potato-red font-medium mb-1">⚠️ LIVE MODE — Real money!</p>
+            <p className="text-potato-muted">
+              The bot will place real buy/sell orders on Coinbase using your API keys.
+              Make sure you have USD in your Coinbase account and your API keys are set in Vercel environment variables.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Section: Money Rules */}
       <div className="p-4 border-b border-potato-border/30">
         <p className="text-potato-accent text-xs font-medium mb-2 uppercase tracking-wider">Money Rules</p>
@@ -703,9 +746,14 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-potato-accent">Hot Potato</h1>
-          <p className="text-potato-muted text-xs">Scalp trading bot &middot; Paper mode</p>
+          <p className="text-potato-muted text-xs">
+            Scalp trading bot &middot;{' '}
+            <span className={state.settings.tradingMode === 'live' ? 'text-potato-red font-medium' : ''}>
+              {state.settings.tradingMode === 'live' ? '🔴 LIVE' : 'Paper'} mode
+            </span>
+          </p>
         </div>
-        <StatusBadge status={state.status} />
+        <StatusBadge status={state.status} isLive={state.settings.tradingMode === 'live'} />
       </div>
 
       {/* Money Cards */}

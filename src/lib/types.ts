@@ -49,6 +49,9 @@ export const DEFAULT_STEPS: ProfitStep[] = [
 // ALL user-controllable settings
 // ============================================
 export interface BotSettings {
+  // Trading mode
+  tradingMode: 'paper' | 'live'  // paper = fake money, live = real Coinbase trades
+
   // Money
   seedAmount: number          // starting capital in USD
   tradeFeePercent: number     // fee per trade (0.006 = 0.6%)
@@ -83,6 +86,7 @@ export interface BotSettings {
 }
 
 export const DEFAULT_SETTINGS: BotSettings = {
+  tradingMode: 'paper',
   seedAmount: 10,
   tradeFeePercent: 0.006,
   feeMultiplier: 2,
@@ -124,6 +128,11 @@ export interface BotState {
   currentStepIndex: number    // which step we're on (0-based)
   currentStepRepeats: number  // how many times we've completed the current step
 
+  // Live trading state
+  coinbaseConfigured: boolean // are API keys set up?
+  coinHolding: number         // amount of coin currently held (for live sells)
+  lastOrderId: string | null  // last Coinbase order ID
+
   trades: Trade[]
   notifications: BotNotification[]
   lastScanTime: number
@@ -160,6 +169,9 @@ export const DEFAULT_BOT_STATE: BotState = {
   profitSinceLastLock: 0,
   currentStepIndex: 0,
   currentStepRepeats: 0,
+  coinbaseConfigured: false,
+  coinHolding: 0,
+  lastOrderId: null,
   trades: [],
   notifications: [],
   lastScanTime: 0,

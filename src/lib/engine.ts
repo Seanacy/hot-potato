@@ -1,9 +1,17 @@
 // Hot Potato — Trading Engine
 // Handles all buy/sell decisions, money management, step-up profit ladder
-// ALL thresholds come from state.settings (user-configurable)
+// Supports both Paper and Live (Coinbase) trading modes
 
 import { BotState, BotNotification, CoinData, ProfitStep } from './types'
 import { scanMarket, shouldBail } from './scanner'
+import {
+  marketBuy,
+  marketSell,
+  getOrder,
+  toProductId,
+  isCoinbaseConfigured,
+  getUsdBalance,
+} from './coinbase'
 
 // ============================================
 // Calculate trade fee (uses settings)
@@ -73,51 +81,149 @@ function getCurrentStep(state: BotState): ProfitStep {
 }
 
 // ============================================
-// BUY a coin
+// BUY a coin — Paper or Live
 // ============================================
-function buyCoin(state: BotState, coin: CoinData, reason: string): BotState {
+async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise<BotState> {
+  const isLive = state.settings.tradingMode === 'live'
   const amount = state.tradingBalance
-  const fee = calcFee(amount, state.settings.tradeFeePercent)
-  const netAmount = amount - fee
 
-  recordTrade(state, 'buy', coin.id, coin.symbol, coin.currentPrice, amount, reason)
-  notify(state, 'trade', `Bought ${coin.symbol} at $${coin.currentPrice.toFixed(4)} — ${reason}`)
+  if (isLive) {
+    // === LIVE MODE: Place real order on Coinbase ===
+    const productId = toProductId(coin.symbol)
+    notify(state, 'info', `[LIVE] Placing buy order for ${coin.symbol} ($${amount.toFixed(2)})...`)
 
-  state.tradingBalance = netAmount
-  state.currentCoin = coin.id
-  state.currentCoinSymbol = coin.symbol
-  state.buyPrice = coin.currentPrice
+    const result = await marketBuy(productId, amount)
+
+    if (!result.success) {
+      notify(state, 'info', `[LIVE] Buy failed: ${result.error}`)
+      return state // don't change state if order failed
+    }
+
+    // Wait a moment then check the order for fill details
+    let filledPrice = coin.currentPrice
+    let filledSize = 0
+    if (result.orderId) {
+      // Small delay to let order settle
+      await new Promise((r) => setTimeout(r, 1500))
+      const details = await getOrder(result.orderId)
+      if (details) {
+        filledPrice = details.averageFilledPrice || coin.currentPrice
+        filledSize = details.filledSize || 0
+      }
+      state.lastOrderId = result.orderId
+    }
+
+    const fee = calcFee(amount, state.settings.tradeFeePercent)
+    const netAmount = amount - fee
+
+    recordTrade(state, 'buy', coin.id, coin.symbol, filledPrice, amount, `[LIVE] ${reason}`)
+    notify(state, 'trade', `[LIVE] Bought ${coin.symbol} at $${filledPrice.toFixed(4)} — ${reason}`)
+
+    state.tradingBalance = netAmount
+    state.currentCoin = coin.id
+    state.currentCoinSymbol = coin.symbol
+    state.buyPrice = filledPrice
+    state.coinHolding = filledSize
+
+  } else {
+    // === PAPER MODE: Simulated trade ===
+    const fee = calcFee(amount, state.settings.tradeFeePercent)
+    const netAmount = amount - fee
+
+    recordTrade(state, 'buy', coin.id, coin.symbol, coin.currentPrice, amount, reason)
+    notify(state, 'trade', `Bought ${coin.symbol} at $${coin.currentPrice.toFixed(4)} — ${reason}`)
+
+    state.tradingBalance = netAmount
+    state.currentCoin = coin.id
+    state.currentCoinSymbol = coin.symbol
+    state.buyPrice = coin.currentPrice
+  }
 
   return state
 }
 
 // ============================================
-// SELL current coin
+// SELL current coin — Paper or Live
 // ============================================
-function sellCoin(state: BotState, currentPrice: number, reason: string): BotState {
+async function sellCoin(state: BotState, currentPrice: number, reason: string): Promise<BotState> {
   if (!state.currentCoin || !state.buyPrice) return state
 
-  const priceChange = (currentPrice - state.buyPrice) / state.buyPrice
-  const saleValue = state.tradingBalance * (1 + priceChange)
-  const fee = calcFee(saleValue, state.settings.tradeFeePercent)
-  const netValue = saleValue - fee
-  const profit = netValue - state.tradingBalance
+  const isLive = state.settings.tradingMode === 'live'
 
-  recordTrade(state, 'sell', state.currentCoin, state.currentCoinSymbol || '?', currentPrice, saleValue, reason)
+  if (isLive) {
+    // === LIVE MODE: Place real sell order on Coinbase ===
+    const symbol = state.currentCoinSymbol || '?'
+    const productId = toProductId(symbol)
 
-  const symbol = state.currentCoinSymbol || '?'
-  if (profit > 0) {
-    notify(state, 'trade', `Sold ${symbol} at $${currentPrice.toFixed(4)} — profit: +$${profit.toFixed(4)}`)
+    if (state.coinHolding <= 0) {
+      notify(state, 'info', `[LIVE] No coin balance to sell`)
+      return state
+    }
+
+    notify(state, 'info', `[LIVE] Placing sell order for ${symbol} (${state.coinHolding})...`)
+    const result = await marketSell(productId, state.coinHolding)
+
+    if (!result.success) {
+      notify(state, 'info', `[LIVE] Sell failed: ${result.error}`)
+      return state
+    }
+
+    let filledPrice = currentPrice
+    let filledValue = state.tradingBalance
+    if (result.orderId) {
+      await new Promise((r) => setTimeout(r, 1500))
+      const details = await getOrder(result.orderId)
+      if (details) {
+        filledPrice = details.averageFilledPrice || currentPrice
+        filledValue = details.filledValue || state.tradingBalance
+      }
+      state.lastOrderId = result.orderId
+    }
+
+    const fee = calcFee(filledValue, state.settings.tradeFeePercent)
+    const netValue = filledValue - fee
+    const profit = netValue - state.tradingBalance
+
+    recordTrade(state, 'sell', state.currentCoin, symbol, filledPrice, filledValue, `[LIVE] ${reason}`)
+
+    if (profit > 0) {
+      notify(state, 'trade', `[LIVE] Sold ${symbol} at $${filledPrice.toFixed(4)} — profit: +$${profit.toFixed(4)}`)
+    } else {
+      notify(state, 'trade', `[LIVE] Sold ${symbol} at $${filledPrice.toFixed(4)} — loss: -$${Math.abs(profit).toFixed(4)}`)
+    }
+
+    state.tradingBalance = netValue
+    state.totalProfit += profit
+    state.profitSinceLastLock += profit
+    state.currentCoin = null
+    state.currentCoinSymbol = null
+    state.buyPrice = null
+    state.coinHolding = 0
+
   } else {
-    notify(state, 'trade', `Sold ${symbol} at $${currentPrice.toFixed(4)} — loss: -$${Math.abs(profit).toFixed(4)}`)
-  }
+    // === PAPER MODE: Simulated trade ===
+    const priceChange = (currentPrice - state.buyPrice) / state.buyPrice
+    const saleValue = state.tradingBalance * (1 + priceChange)
+    const fee = calcFee(saleValue, state.settings.tradeFeePercent)
+    const netValue = saleValue - fee
+    const profit = netValue - state.tradingBalance
 
-  state.tradingBalance = netValue
-  state.totalProfit += profit
-  state.profitSinceLastLock += profit
-  state.currentCoin = null
-  state.currentCoinSymbol = null
-  state.buyPrice = null
+    recordTrade(state, 'sell', state.currentCoin, state.currentCoinSymbol || '?', currentPrice, saleValue, reason)
+
+    const symbol = state.currentCoinSymbol || '?'
+    if (profit > 0) {
+      notify(state, 'trade', `Sold ${symbol} at $${currentPrice.toFixed(4)} — profit: +$${profit.toFixed(4)}`)
+    } else {
+      notify(state, 'trade', `Sold ${symbol} at $${currentPrice.toFixed(4)} — loss: -$${Math.abs(profit).toFixed(4)}`)
+    }
+
+    state.tradingBalance = netValue
+    state.totalProfit += profit
+    state.profitSinceLastLock += profit
+    state.currentCoin = null
+    state.currentCoinSymbol = null
+    state.buyPrice = null
+  }
 
   return state
 }
@@ -132,7 +238,6 @@ function checkProfitLadder(state: BotState): BotState {
   return checkStepUpLadder(state)
 }
 
-// Simple mode: one flat target + lock amount, repeats forever
 function checkSimpleLadder(state: BotState): BotState {
   const target = state.settings.simpleProfitTarget
   const lockAmount = state.settings.simpleLockAmount
@@ -155,7 +260,6 @@ function checkSimpleLadder(state: BotState): BotState {
   return state
 }
 
-// Step-up mode: staircase of steps
 function checkStepUpLadder(state: BotState): BotState {
   const step = getCurrentStep(state)
   const steps = state.settings.steps
@@ -177,7 +281,6 @@ function checkStepUpLadder(state: BotState): BotState {
         `Step ${state.currentStepIndex + 1} — Locked $${lockAmount.toFixed(2)}! (${state.currentStepRepeats}/${step.repeatCount || '∞'}) Total safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
     }
 
-    // repeatCount of 0 = repeat forever
     if (!isLastStep && step.repeatCount > 0 && state.currentStepRepeats >= step.repeatCount) {
       state.currentStepIndex++
       state.currentStepRepeats = 0
@@ -237,6 +340,16 @@ function shouldJump(
 export async function tick(state: BotState): Promise<BotState> {
   if (state.status !== 'running') return state
 
+  // Check Coinbase config status
+  state.coinbaseConfigured = isCoinbaseConfigured()
+
+  // If live mode but Coinbase not configured, refuse to trade
+  if (state.settings.tradingMode === 'live' && !state.coinbaseConfigured) {
+    notify(state, 'info', 'Cannot trade in Live mode — Coinbase API keys not configured')
+    state.status = 'paused'
+    return state
+  }
+
   const scan = await scanMarket(state.settings)
   state.lastScanTime = scan.scannedAt
 
@@ -246,7 +359,7 @@ export async function tick(state: BotState): Promise<BotState> {
     if (heldCoin) {
       const bailCheck = shouldBail(heldCoin, state.buyPrice || 0, state.settings)
       if (bailCheck.bail) {
-        state = sellCoin(state, heldCoin.currentPrice, bailCheck.reason)
+        state = await sellCoin(state, heldCoin.currentPrice, bailCheck.reason)
         state = checkProfitLadder(state)
         state = checkZeroOut(state)
         if (state.status === 'paused') return state
@@ -254,7 +367,7 @@ export async function tick(state: BotState): Promise<BotState> {
     } else {
       const anyData = scan.topCoins[0]
       if (anyData && state.buyPrice) {
-        state = sellCoin(state, state.buyPrice * 0.998, 'Coin no longer qualifies — bailing')
+        state = await sellCoin(state, state.buyPrice * 0.998, 'Coin no longer qualifies — bailing')
         state = checkProfitLadder(state)
         state = checkZeroOut(state)
         if (state.status === 'paused') return state
@@ -263,7 +376,7 @@ export async function tick(state: BotState): Promise<BotState> {
   }
 
   if (!state.currentCoin && scan.bestOpportunity) {
-    state = buyCoin(state, scan.bestOpportunity, 'Best momentum opportunity')
+    state = await buyCoin(state, scan.bestOpportunity, 'Best momentum opportunity')
   }
 
   if (state.currentCoin && scan.bestOpportunity) {
@@ -271,12 +384,12 @@ export async function tick(state: BotState): Promise<BotState> {
     if (jumpCheck.jump && scan.bestOpportunity.id !== state.currentCoin) {
       const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
       if (heldCoin) {
-        state = sellCoin(state, heldCoin.currentPrice, 'Jumping to better opportunity')
+        state = await sellCoin(state, heldCoin.currentPrice, 'Jumping to better opportunity')
         state = checkProfitLadder(state)
         state = checkZeroOut(state)
         if (state.status === 'paused') return state
       }
-      state = buyCoin(state, scan.bestOpportunity, jumpCheck.reason)
+      state = await buyCoin(state, scan.bestOpportunity, jumpCheck.reason)
     }
   }
 
@@ -287,10 +400,13 @@ export async function tick(state: BotState): Promise<BotState> {
 // START the bot
 // ============================================
 export function startBot(state: BotState): BotState {
+  state.coinbaseConfigured = isCoinbaseConfigured()
   state.status = 'running'
   state.startedAt = Date.now()
+
+  const modeLabel = state.settings.tradingMode === 'live' ? '[LIVE]' : '[PAPER]'
   const step = getCurrentStep(state)
-  notify(state, 'info', `Hot Potato is running! Step ${state.currentStepIndex + 1}: earn $${step.profitTarget} → lock $${step.lockAmount}`)
+  notify(state, 'info', `${modeLabel} Hot Potato is running! Step ${state.currentStepIndex + 1}: earn $${step.profitTarget} → lock $${step.lockAmount}`)
   return state
 }
 
@@ -325,4 +441,15 @@ export function restartBot(state: BotState): BotState {
     notify(state, 'info', `Not enough locked profits to restart. Need at least $${restartAmount}`)
   }
   return state
+}
+
+// ============================================
+// Check Coinbase balance (for dashboard display)
+// ============================================
+export async function checkLiveBalance(): Promise<number> {
+  try {
+    return await getUsdBalance()
+  } catch {
+    return 0
+  }
 }
