@@ -153,6 +153,37 @@ export interface BotNotification {
   read: boolean
 }
 
+// ============================================
+// Activity Feed — real-time log of bot actions
+// ============================================
+export type ActivityType =
+  | 'scan_start'      // started scanning
+  | 'scan_complete'   // finished scanning, found N coins
+  | 'coin_qualified'  // a coin passed all filters
+  | 'coin_rejected'   // a coin was rejected (with reason)
+  | 'evaluating'      // evaluating a specific coin
+  | 'buy'             // bought a coin
+  | 'sell'            // sold a coin
+  | 'bail'            // bailing on a coin
+  | 'jump'            // jumping to a better coin
+  | 'jump_skip'       // considered jumping but not worth it
+  | 'profit_lock'     // locked profits
+  | 'step_up'         // moved to next profit step
+  | 'zero_out'        // trading balance zeroed out
+  | 'hold'            // still holding, trend is good
+  | 'idle'            // no opportunities found
+  | 'bot_start'       // bot started
+  | 'bot_pause'       // bot paused
+  | 'error'           // something went wrong
+
+export interface ActivityEntry {
+  id: string
+  type: ActivityType
+  message: string
+  detail?: string       // extra info (coin name, price, reason, etc.)
+  timestamp: number
+}
+
 export interface ScannedCoin {
   id: string
   symbol: string

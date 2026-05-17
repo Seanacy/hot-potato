@@ -1011,7 +1011,15 @@ export default function Dashboard() {
             }
           </p>
         </div>
-        <StatusBadge status={state.status} isLive={state.settings.tradingMode === 'live'} />
+        <div className="flex items-center gap-3">
+          <a
+            href="/activity"
+            className="px-3 py-1.5 rounded-lg bg-potato-surface border border-potato-border text-potato-muted text-xs hover:text-potato-accent hover:border-potato-accent/50 transition"
+          >
+            Live Feed
+          </a>
+          <StatusBadge status={state.status} isLive={state.settings.tradingMode === 'live'} />
+        </div>
       </div>
 
       {/* Money Cards */}
