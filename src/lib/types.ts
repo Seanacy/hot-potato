@@ -31,14 +31,38 @@ export interface Trade {
 }
 
 // ============================================
+// Step-Up Profit Ladder
+// ============================================
+export interface ProfitStep {
+  profitTarget: number   // earn this much profit to trigger a lock
+  lockAmount: number     // lock this much when triggered
+  repeatCount: number    // how many times to repeat this step before moving on
+}
+
+export const DEFAULT_STEPS: ProfitStep[] = [
+  { profitTarget: 5, lockAmount: 2.5, repeatCount: 4 },
+  { profitTarget: 10, lockAmount: 5, repeatCount: 3 },
+  { profitTarget: 20, lockAmount: 10, repeatCount: 0 }, // 0 = repeat forever (last step)
+]
+
+// ============================================
 // ALL user-controllable settings
 // ============================================
 export interface BotSettings {
   // Money
   seedAmount: number          // starting capital in USD
-  profitThreshold: number     // lock profits every $X
   tradeFeePercent: number     // fee per trade (0.006 = 0.6%)
   feeMultiplier: number       // only jump if gain >= Nx fees
+
+  // Profit ladder mode: 'simple' = one flat threshold, 'step-up' = staircase
+  ladderMode: 'simple' | 'step-up'
+
+  // Simple mode settings
+  simpleProfitTarget: number  // earn this much to trigger a lock
+  simpleLockAmount: number    // lock this much when triggered
+
+  // Step-up profit ladder
+  steps: ProfitStep[]         // the step-up rules
 
   // Scanner
   scanIntervalMs: number      // how often to scan (ms)
@@ -60,9 +84,12 @@ export interface BotSettings {
 
 export const DEFAULT_SETTINGS: BotSettings = {
   seedAmount: 10,
-  profitThreshold: 5,
   tradeFeePercent: 0.006,
   feeMultiplier: 2,
+  ladderMode: 'simple',
+  simpleProfitTarget: 5,
+  simpleLockAmount: 2.5,
+  steps: [...DEFAULT_STEPS],
   scanIntervalMs: 5000,
   trendWindowSec: 90,
   minTrendSec: 30,
@@ -76,6 +103,9 @@ export const DEFAULT_SETTINGS: BotSettings = {
   reversalThreshold: 0.1,
 }
 
+// ============================================
+// Bot State
+// ============================================
 export interface BotState {
   status: 'running' | 'paused' | 'stopped'
   mode: 'growth' | 'profit-only'
@@ -89,6 +119,11 @@ export interface BotState {
   totalTrades: number
   totalProfit: number
   profitSinceLastLock: number
+
+  // Step-up ladder tracking
+  currentStepIndex: number    // which step we're on (0-based)
+  currentStepRepeats: number  // how many times we've completed the current step
+
   trades: Trade[]
   notifications: BotNotification[]
   lastScanTime: number
@@ -97,7 +132,7 @@ export interface BotState {
 
 export interface BotNotification {
   id: string
-  type: 'profit_locked' | 'zeroed_out' | 'trade' | 'info'
+  type: 'profit_locked' | 'zeroed_out' | 'trade' | 'info' | 'step_up'
   message: string
   timestamp: number
   read: boolean
@@ -113,7 +148,7 @@ export interface ScanResult {
 export const DEFAULT_BOT_STATE: BotState = {
   status: 'stopped',
   mode: 'growth',
-  settings: { ...DEFAULT_SETTINGS },
+  settings: { ...DEFAULT_SETTINGS, steps: [...DEFAULT_STEPS] },
   seedAmount: DEFAULT_SETTINGS.seedAmount,
   lockedProfits: 0,
   tradingBalance: DEFAULT_SETTINGS.seedAmount,
@@ -123,6 +158,8 @@ export const DEFAULT_BOT_STATE: BotState = {
   totalTrades: 0,
   totalProfit: 0,
   profitSinceLastLock: 0,
+  currentStepIndex: 0,
+  currentStepRepeats: 0,
   trades: [],
   notifications: [],
   lastScanTime: 0,

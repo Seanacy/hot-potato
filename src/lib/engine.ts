@@ -1,8 +1,8 @@
 // Hot Potato — Trading Engine
-// Handles all buy/sell decisions, money management, profit ladder
+// Handles all buy/sell decisions, money management, step-up profit ladder
 // ALL thresholds come from state.settings (user-configurable)
 
-import { BotState, Trade, BotNotification, CoinData } from './types'
+import { BotState, BotNotification, CoinData, ProfitStep } from './types'
 import { scanMarket, shouldBail } from './scanner'
 
 // ============================================
@@ -42,9 +42,9 @@ function recordTrade(
   price: number,
   amount: number,
   reason: string
-): Trade {
+) {
   const fee = calcFee(amount, state.settings.tradeFeePercent)
-  const trade: Trade = {
+  const trade = {
     id: `trade-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     type,
     coinId,
@@ -58,6 +58,18 @@ function recordTrade(
   state.trades.unshift(trade)
   state.totalTrades++
   return trade
+}
+
+// ============================================
+// Get the current step (never goes out of bounds)
+// ============================================
+function getCurrentStep(state: BotState): ProfitStep {
+  const steps = state.settings.steps
+  if (steps.length === 0) {
+    return { profitTarget: 5, lockAmount: 2.5, repeatCount: 0 }
+  }
+  const idx = Math.min(state.currentStepIndex, steps.length - 1)
+  return steps[idx]
 }
 
 // ============================================
@@ -111,13 +123,21 @@ function sellCoin(state: BotState, currentPrice: number, reason: string): BotSta
 }
 
 // ============================================
-// Check and apply profit ladder rules
+// Profit Ladder — supports simple or step-up mode
 // ============================================
 function checkProfitLadder(state: BotState): BotState {
-  const threshold = state.settings.profitThreshold
+  if (state.settings.ladderMode === 'simple') {
+    return checkSimpleLadder(state)
+  }
+  return checkStepUpLadder(state)
+}
 
-  if (state.profitSinceLastLock >= threshold) {
-    const lockAmount = threshold
+// Simple mode: one flat target + lock amount, repeats forever
+function checkSimpleLadder(state: BotState): BotState {
+  const target = state.settings.simpleProfitTarget
+  const lockAmount = state.settings.simpleLockAmount
+
+  if (state.profitSinceLastLock >= target) {
     state.lockedProfits += lockAmount
     state.tradingBalance -= lockAmount
     state.profitSinceLastLock = 0
@@ -125,10 +145,45 @@ function checkProfitLadder(state: BotState): BotState {
     if (state.mode === 'growth') {
       state.mode = 'profit-only'
       notify(state, 'profit_locked',
-        `Profit locked! $${lockAmount.toFixed(2)} moved to safe pile. Seed money ($${state.seedAmount}) is now protected. Trading with profits only.`)
+        `Profit locked! $${lockAmount.toFixed(2)} moved to safe pile. Seed ($${state.seedAmount}) is now protected.`)
     } else {
       notify(state, 'profit_locked',
-        `Profit locked! $${lockAmount.toFixed(2)} moved to safe pile. Total safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
+        `Locked $${lockAmount.toFixed(2)}! Total safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
+    }
+  }
+
+  return state
+}
+
+// Step-up mode: staircase of steps
+function checkStepUpLadder(state: BotState): BotState {
+  const step = getCurrentStep(state)
+  const steps = state.settings.steps
+  const isLastStep = state.currentStepIndex >= steps.length - 1
+
+  if (state.profitSinceLastLock >= step.profitTarget) {
+    const lockAmount = step.lockAmount
+    state.lockedProfits += lockAmount
+    state.tradingBalance -= lockAmount
+    state.profitSinceLastLock = 0
+    state.currentStepRepeats++
+
+    if (state.mode === 'growth') {
+      state.mode = 'profit-only'
+      notify(state, 'profit_locked',
+        `Step ${state.currentStepIndex + 1} — Profit locked! $${lockAmount.toFixed(2)} moved to safe pile. Seed ($${state.seedAmount}) is now protected.`)
+    } else {
+      notify(state, 'profit_locked',
+        `Step ${state.currentStepIndex + 1} — Locked $${lockAmount.toFixed(2)}! (${state.currentStepRepeats}/${step.repeatCount || '∞'}) Total safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
+    }
+
+    // repeatCount of 0 = repeat forever
+    if (!isLastStep && step.repeatCount > 0 && state.currentStepRepeats >= step.repeatCount) {
+      state.currentStepIndex++
+      state.currentStepRepeats = 0
+      const nextStep = getCurrentStep(state)
+      notify(state, 'step_up',
+        `Stepped up! Now on Step ${state.currentStepIndex + 1}: earn $${nextStep.profitTarget} → lock $${nextStep.lockAmount}`)
     }
   }
 
@@ -144,7 +199,7 @@ function checkZeroOut(state: BotState): BotState {
     state.tradingBalance = 0
     state.profitSinceLastLock = 0
     notify(state, 'zeroed_out',
-      `Trading profits zeroed out. Bot is paused. Your seed ($${state.seedAmount}) and locked profits ($${state.lockedProfits.toFixed(2)}) are safe. Restart manually when ready.`)
+      `Trading profits zeroed out. Bot paused. Your seed ($${state.seedAmount}) and locked profits ($${state.lockedProfits.toFixed(2)}) are safe.`)
   }
   return state
 }
@@ -182,11 +237,9 @@ function shouldJump(
 export async function tick(state: BotState): Promise<BotState> {
   if (state.status !== 'running') return state
 
-  // 1. Scan the market (pass settings so scanner uses user's values)
   const scan = await scanMarket(state.settings)
   state.lastScanTime = scan.scannedAt
 
-  // 2. If we're holding a coin, check if we should bail
   if (state.currentCoin) {
     const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
 
@@ -209,12 +262,10 @@ export async function tick(state: BotState): Promise<BotState> {
     }
   }
 
-  // 3. If we're not holding anything, look for the best opportunity
   if (!state.currentCoin && scan.bestOpportunity) {
     state = buyCoin(state, scan.bestOpportunity, 'Best momentum opportunity')
   }
 
-  // 4. If we're holding but there's a much better coin, consider jumping
   if (state.currentCoin && scan.bestOpportunity) {
     const jumpCheck = shouldJump(state, scan.bestOpportunity)
     if (jumpCheck.jump && scan.bestOpportunity.id !== state.currentCoin) {
@@ -238,7 +289,8 @@ export async function tick(state: BotState): Promise<BotState> {
 export function startBot(state: BotState): BotState {
   state.status = 'running'
   state.startedAt = Date.now()
-  notify(state, 'info', 'Hot Potato is running! Scanning the market...')
+  const step = getCurrentStep(state)
+  notify(state, 'info', `Hot Potato is running! Step ${state.currentStepIndex + 1}: earn $${step.profitTarget} → lock $${step.lockAmount}`)
   return state
 }
 
@@ -255,16 +307,22 @@ export function pauseBot(state: BotState): BotState {
 // RESTART the bot after zero-out
 // ============================================
 export function restartBot(state: BotState): BotState {
-  const threshold = state.settings.profitThreshold
+  let restartAmount: number
+  if (state.settings.ladderMode === 'simple') {
+    restartAmount = state.settings.simpleLockAmount
+  } else {
+    const step = getCurrentStep(state)
+    restartAmount = step.lockAmount
+  }
 
-  if (state.lockedProfits >= threshold) {
-    state.lockedProfits -= threshold
-    state.tradingBalance = threshold
+  if (state.lockedProfits >= restartAmount) {
+    state.lockedProfits -= restartAmount
+    state.tradingBalance = restartAmount
     state.status = 'running'
     state.profitSinceLastLock = 0
-    notify(state, 'info', `Restarted with $${threshold} from locked profits. Remaining safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
+    notify(state, 'info', `Restarted with $${restartAmount} from locked profits. Remaining safe: $${(state.seedAmount + state.lockedProfits).toFixed(2)}`)
   } else {
-    notify(state, 'info', 'Not enough locked profits to restart. Need at least $' + threshold)
+    notify(state, 'info', `Not enough locked profits to restart. Need at least $${restartAmount}`)
   }
   return state
 }

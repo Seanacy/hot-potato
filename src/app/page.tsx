@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { BotState, BotSettings, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, BotNotification, Trade } from '@/lib/types'
+import { BotState, BotSettings, ProfitStep, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, DEFAULT_STEPS, BotNotification, Trade } from '@/lib/types'
 
 // ============================================
 // Status Badge
@@ -151,28 +151,53 @@ function Notifications({ notifications }: { notifications: BotNotification[] }) 
 // ============================================
 function ProfitLadder({ state }: { state: BotState }) {
   const totalSafe = state.seedAmount + state.lockedProfits
-  const threshold = state.settings.profitThreshold
-  const segments = Math.floor(state.lockedProfits / threshold)
+  const isStepUp = state.settings.ladderMode === 'step-up'
+
+  // Figure out current target for display
+  let currentTarget: number
+  let currentLock: number
+  if (isStepUp && state.settings.steps.length > 0) {
+    const idx = Math.min(state.currentStepIndex, state.settings.steps.length - 1)
+    const step = state.settings.steps[idx]
+    currentTarget = step.profitTarget
+    currentLock = step.lockAmount
+  } else {
+    currentTarget = state.settings.simpleProfitTarget
+    currentLock = state.settings.simpleLockAmount
+  }
+
+  // Count locked segments
+  const segments = currentLock > 0 ? Math.floor(state.lockedProfits / currentLock) : 0
 
   return (
     <div className="bg-potato-surface rounded-xl p-5 border border-potato-border">
-      <p className="text-potato-muted text-xs mb-3">Profit ladder</p>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-potato-muted text-xs">Profit ladder</p>
+        <span className="text-xs px-2 py-0.5 rounded bg-potato-surface-2 text-potato-muted">
+          {isStepUp ? `Step ${state.currentStepIndex + 1} of ${state.settings.steps.length}` : 'Simple mode'}
+        </span>
+      </div>
       <div className="flex items-center gap-2 flex-wrap">
         <div className="px-3 py-1.5 rounded-lg bg-potato-accent/20 border border-potato-accent/30 text-potato-accent text-xs font-medium">
           Seed ${state.seedAmount}
         </div>
-        {Array.from({ length: segments }).map((_, i) => (
+        {Array.from({ length: Math.min(segments, 20) }).map((_, i) => (
           <div key={i} className="px-3 py-1.5 rounded-lg bg-potato-green/20 border border-potato-green/30 text-potato-green text-xs font-medium">
-            +${threshold}
+            +${currentLock}
           </div>
         ))}
         <div className="px-3 py-1.5 rounded-lg bg-potato-surface-2 border border-potato-border text-potato-text text-xs">
           Trading: ${state.tradingBalance.toFixed(2)}
         </div>
       </div>
-      <p className="text-potato-muted text-xs mt-3">
-        Safe pile: ${totalSafe.toFixed(2)} &middot; Mode: {state.mode === 'growth' ? 'Growth (trading everything)' : 'Profit-only (seed protected)'}
-      </p>
+      <div className="text-potato-muted text-xs mt-3 space-y-1">
+        <p>Safe pile: ${totalSafe.toFixed(2)} &middot; Mode: {state.mode === 'growth' ? 'Growth (trading everything)' : 'Profit-only (seed protected)'}</p>
+        <p>Current rule: earn ${currentTarget} → lock ${currentLock}
+          {isStepUp && state.settings.steps.length > 0 && (
+            <span> &middot; Repeats: {state.currentStepRepeats}/{state.settings.steps[Math.min(state.currentStepIndex, state.settings.steps.length - 1)].repeatCount || '∞'}</span>
+          )}
+        </p>
+      </div>
     </div>
   )
 }
@@ -224,6 +249,75 @@ function SettingRow({
 // ============================================
 // Settings Panel
 // ============================================
+// ============================================
+// Step Editor Row
+// ============================================
+function StepRow({
+  step,
+  index,
+  onChange,
+  onRemove,
+  isLast,
+}: {
+  step: ProfitStep
+  index: number
+  onChange: (s: ProfitStep) => void
+  onRemove: () => void
+  isLast: boolean
+}) {
+  return (
+    <div className="flex items-center gap-2 py-2 border-b border-potato-border/30 last:border-0">
+      <span className="text-potato-muted text-xs w-6 shrink-0">#{index + 1}</span>
+      <div className="flex-1 grid grid-cols-3 gap-2">
+        <div>
+          <p className="text-potato-muted text-[10px] mb-0.5">Earn $</p>
+          <input
+            type="number"
+            value={step.profitTarget}
+            onChange={(e) => onChange({ ...step, profitTarget: parseFloat(e.target.value) || 0 })}
+            step={1}
+            min={1}
+            className="w-full bg-potato-surface-2 border border-potato-border rounded-lg px-2 py-1 text-xs text-potato-text text-right focus:border-potato-accent focus:outline-none"
+          />
+        </div>
+        <div>
+          <p className="text-potato-muted text-[10px] mb-0.5">Lock $</p>
+          <input
+            type="number"
+            value={step.lockAmount}
+            onChange={(e) => onChange({ ...step, lockAmount: parseFloat(e.target.value) || 0 })}
+            step={0.5}
+            min={0.5}
+            className="w-full bg-potato-surface-2 border border-potato-border rounded-lg px-2 py-1 text-xs text-potato-text text-right focus:border-potato-accent focus:outline-none"
+          />
+        </div>
+        <div>
+          <p className="text-potato-muted text-[10px] mb-0.5">{isLast ? 'Repeats (∞)' : 'Repeats'}</p>
+          <input
+            type="number"
+            value={step.repeatCount}
+            onChange={(e) => onChange({ ...step, repeatCount: parseInt(e.target.value) || 0 })}
+            step={1}
+            min={0}
+            placeholder={isLast ? '∞' : '1'}
+            className="w-full bg-potato-surface-2 border border-potato-border rounded-lg px-2 py-1 text-xs text-potato-text text-right focus:border-potato-accent focus:outline-none"
+          />
+        </div>
+      </div>
+      <button
+        onClick={onRemove}
+        className="text-potato-muted hover:text-potato-red text-xs px-1 shrink-0"
+        title="Remove step"
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
+// ============================================
+// Settings Panel
+// ============================================
 function SettingsPanel({
   settings,
   onSave,
@@ -233,17 +327,41 @@ function SettingsPanel({
   onSave: (s: BotSettings) => void
   disabled: boolean
 }) {
-  const [draft, setDraft] = useState<BotSettings>({ ...settings })
+  const [draft, setDraft] = useState<BotSettings>({ ...settings, steps: settings.steps.map(s => ({...s})) })
   const [dirty, setDirty] = useState(false)
 
-  // Sync draft if settings change from outside
   useEffect(() => {
-    setDraft({ ...settings })
+    setDraft({ ...settings, steps: settings.steps.map(s => ({...s})) })
     setDirty(false)
   }, [settings])
 
-  const update = (key: keyof BotSettings, val: number) => {
+  const update = (key: keyof BotSettings, val: number | string) => {
     setDraft((prev) => ({ ...prev, [key]: val }))
+    setDirty(true)
+  }
+
+  const updateStep = (index: number, step: ProfitStep) => {
+    setDraft((prev) => {
+      const newSteps = [...prev.steps]
+      newSteps[index] = step
+      return { ...prev, steps: newSteps }
+    })
+    setDirty(true)
+  }
+
+  const addStep = () => {
+    setDraft((prev) => ({
+      ...prev,
+      steps: [...prev.steps, { profitTarget: 10, lockAmount: 5, repeatCount: 0 }],
+    }))
+    setDirty(true)
+  }
+
+  const removeStep = (index: number) => {
+    setDraft((prev) => ({
+      ...prev,
+      steps: prev.steps.filter((_, i) => i !== index),
+    }))
     setDirty(true)
   }
 
@@ -253,7 +371,7 @@ function SettingsPanel({
   }
 
   const handleReset = () => {
-    setDraft({ ...DEFAULT_SETTINGS })
+    setDraft({ ...DEFAULT_SETTINGS, steps: DEFAULT_STEPS.map(s => ({...s})) })
     setDirty(true)
   }
 
@@ -267,15 +385,6 @@ function SettingsPanel({
           hint="Starting capital"
           value={draft.seedAmount}
           onChange={(v) => update('seedAmount', v)}
-          suffix="$"
-          step={1}
-          min={1}
-        />
-        <SettingRow
-          label="Profit Lock Threshold"
-          hint="Lock profits every $X earned"
-          value={draft.profitThreshold}
-          onChange={(v) => update('profitThreshold', v)}
           suffix="$"
           step={1}
           min={1}
@@ -300,6 +409,84 @@ function SettingsPanel({
           min={1}
           max={10}
         />
+      </div>
+
+      {/* Section: Profit Ladder */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-3 uppercase tracking-wider">Profit Ladder</p>
+
+        {/* Mode toggle */}
+        <div className="flex gap-1 bg-potato-surface-2 rounded-lg p-1 mb-4">
+          <button
+            onClick={() => { update('ladderMode', 'simple'); }}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition ${
+              draft.ladderMode === 'simple'
+                ? 'bg-potato-accent text-white'
+                : 'text-potato-muted hover:text-potato-text'
+            }`}
+          >
+            Simple
+          </button>
+          <button
+            onClick={() => { update('ladderMode', 'step-up'); }}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition ${
+              draft.ladderMode === 'step-up'
+                ? 'bg-potato-accent text-white'
+                : 'text-potato-muted hover:text-potato-text'
+            }`}
+          >
+            Step-Up
+          </button>
+        </div>
+
+        {draft.ladderMode === 'simple' ? (
+          <>
+            <p className="text-potato-muted text-xs mb-2">One rule, repeats forever.</p>
+            <SettingRow
+              label="Profit Target"
+              hint="Earn this much to trigger a lock"
+              value={draft.simpleProfitTarget}
+              onChange={(v) => update('simpleProfitTarget', v)}
+              suffix="$"
+              step={1}
+              min={1}
+            />
+            <SettingRow
+              label="Lock Amount"
+              hint="Lock this much when triggered"
+              value={draft.simpleLockAmount}
+              onChange={(v) => update('simpleLockAmount', v)}
+              suffix="$"
+              step={0.5}
+              min={0.5}
+            />
+          </>
+        ) : (
+          <>
+            <p className="text-potato-muted text-xs mb-2">
+              Each step has a profit target, lock amount, and repeat count.
+              The last step repeats forever (set repeats to 0 for infinite).
+            </p>
+            <div className="space-y-0">
+              {draft.steps.map((step, i) => (
+                <StepRow
+                  key={i}
+                  step={step}
+                  index={i}
+                  onChange={(s) => updateStep(i, s)}
+                  onRemove={() => removeStep(i)}
+                  isLast={i === draft.steps.length - 1}
+                />
+              ))}
+            </div>
+            <button
+              onClick={addStep}
+              className="mt-2 w-full py-2 rounded-lg border border-dashed border-potato-border text-potato-muted text-xs hover:border-potato-accent hover:text-potato-accent transition"
+            >
+              + Add Step
+            </button>
+          </>
+        )}
       </div>
 
       {/* Section: Scanner Rules */}
@@ -587,7 +774,11 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="flex gap-4 text-xs text-potato-muted mb-4">
         <span>Trades: {state.totalTrades}</span>
-        <span>Profit to next lock: ${Math.max(0, state.profitSinceLastLock).toFixed(2)} / ${state.settings.profitThreshold}</span>
+        <span>Profit to next lock: ${Math.max(0, state.profitSinceLastLock).toFixed(2)} / ${
+          state.settings.ladderMode === 'step-up' && state.settings.steps.length > 0
+            ? state.settings.steps[Math.min(state.currentStepIndex, state.settings.steps.length - 1)].profitTarget
+            : state.settings.simpleProfitTarget
+        }</span>
         {state.lastScanTime > 0 && (
           <span>Last scan: {new Date(state.lastScanTime).toLocaleTimeString()}</span>
         )}
