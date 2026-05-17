@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BotState, BotSettings, ScannedCoin, DEFAULT_BOT_STATE } from '@/lib/types'
-import { startBot, pauseBot, restartBot, tick, getActivityLog, clearActivityLog } from '@/lib/engine'
+import { startBot, pauseBot, restartBot, tick, getActivityLog, clearActivityLog, getTradeRounds, clearTradeRounds } from '@/lib/engine'
 import { scanMarket } from '@/lib/scanner'
 
 export const dynamic = 'force-dynamic'
@@ -12,7 +12,7 @@ let botState: BotState = { ...DEFAULT_BOT_STATE }
 let lastScanCoins: ScannedCoin[] = []
 
 function buildResponse() {
-  return { state: botState, scanResults: lastScanCoins, activity: getActivityLog() }
+  return { state: botState, scanResults: lastScanCoins, activity: getActivityLog(), tradeRounds: getTradeRounds() }
 }
 
 // GET — return current bot state + scan data + activity log
@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
       botState.tradingBalance = botState.settings.seedAmount
       lastScanCoins = []
       clearActivityLog()
+      clearTradeRounds()
       return NextResponse.json(buildResponse())
 
     case 'settings': {

@@ -1013,6 +1013,12 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-3">
           <a
+            href="/history"
+            className="px-3 py-1.5 rounded-lg bg-potato-surface border border-potato-border text-potato-muted text-xs hover:text-potato-accent hover:border-potato-accent/50 transition"
+          >
+            History
+          </a>
+          <a
             href="/activity"
             className="px-3 py-1.5 rounded-lg bg-potato-surface border border-potato-border text-potato-muted text-xs hover:text-potato-accent hover:border-potato-accent/50 transition"
           >

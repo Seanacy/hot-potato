@@ -30,6 +30,28 @@ export interface Trade {
   reason: string // why the bot made this trade
 }
 
+// A complete buy→sell round trip for analytics
+export interface TradeRound {
+  id: string
+  coinId: string
+  coinSymbol: string
+  buyPrice: number
+  sellPrice: number
+  buyAmount: number        // USD spent
+  sellAmount: number       // USD received (before fees)
+  buyFee: number
+  sellFee: number
+  totalFees: number
+  profit: number           // net profit after fees
+  profitPercent: number    // % return
+  holdDurationMs: number   // how long we held
+  buyTimestamp: number
+  sellTimestamp: number
+  buyReason: string
+  sellReason: string
+  won: boolean             // profit > 0
+}
+
 // ============================================
 // Step-Up Profit Ladder
 // ============================================

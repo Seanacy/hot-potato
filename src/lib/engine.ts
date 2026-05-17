@@ -3,7 +3,7 @@
 // Supports both Paper and Live (Coinbase) trading modes
 // Logs every action to the activity feed
 
-import { BotState, BotNotification, CoinData, ProfitStep, ActivityEntry, ActivityType } from './types'
+import { BotState, BotNotification, CoinData, ProfitStep, ActivityEntry, ActivityType, TradeRound } from './types'
 import { scanMarket, shouldBail } from './scanner'
 import {
   marketBuy,
@@ -27,6 +27,30 @@ export function getActivityLog(): ActivityEntry[] {
 export function clearActivityLog(): void {
   activityLog = []
 }
+
+// ============================================
+// Trade rounds — complete buy→sell records
+// ============================================
+let tradeRounds: TradeRound[] = []
+
+export function getTradeRounds(): TradeRound[] {
+  return tradeRounds
+}
+
+export function clearTradeRounds(): void {
+  tradeRounds = []
+}
+
+// Temporary storage for current buy info (to pair with sell)
+let pendingBuy: {
+  coinId: string
+  coinSymbol: string
+  buyPrice: number
+  buyAmount: number
+  buyFee: number
+  buyTimestamp: number
+  buyReason: string
+} | null = null
 
 function log(type: ActivityType, message: string, detail?: string): void {
   const entry: ActivityEntry = {
@@ -156,6 +180,17 @@ async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise
     state.buyPrice = filledPrice
     state.coinHolding = filledSize
 
+    // Save pending buy for trade round pairing
+    pendingBuy = {
+      coinId: coin.id,
+      coinSymbol: coin.symbol,
+      buyPrice: filledPrice,
+      buyAmount: amount,
+      buyFee: fee,
+      buyTimestamp: Date.now(),
+      buyReason: `[LIVE] ${reason}`,
+    }
+
   } else {
     const fee = calcFee(amount, state.settings.tradeFeePercent)
     const netAmount = amount - fee
@@ -167,6 +202,17 @@ async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise
     state.currentCoin = coin.id
     state.currentCoinSymbol = coin.symbol
     state.buyPrice = coin.currentPrice
+
+    // Save pending buy for trade round pairing
+    pendingBuy = {
+      coinId: coin.id,
+      coinSymbol: coin.symbol,
+      buyPrice: coin.currentPrice,
+      buyAmount: amount,
+      buyFee: fee,
+      buyTimestamp: Date.now(),
+      buyReason: reason,
+    }
   }
 
   return state
@@ -232,6 +278,32 @@ async function sellCoin(state: BotState, currentPrice: number, reason: string): 
     state.buyPrice = null
     state.coinHolding = 0
 
+    // Record trade round
+    if (pendingBuy) {
+      const round: TradeRound = {
+        id: `round-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        coinId: pendingBuy.coinId,
+        coinSymbol: pendingBuy.coinSymbol,
+        buyPrice: pendingBuy.buyPrice,
+        sellPrice: filledPrice,
+        buyAmount: pendingBuy.buyAmount,
+        sellAmount: filledValue,
+        buyFee: pendingBuy.buyFee,
+        sellFee: fee,
+        totalFees: pendingBuy.buyFee + fee,
+        profit,
+        profitPercent: (profit / pendingBuy.buyAmount) * 100,
+        holdDurationMs: Date.now() - pendingBuy.buyTimestamp,
+        buyTimestamp: pendingBuy.buyTimestamp,
+        sellTimestamp: Date.now(),
+        buyReason: pendingBuy.buyReason,
+        sellReason: `[LIVE] ${reason}`,
+        won: profit > 0,
+      }
+      tradeRounds.unshift(round)
+      pendingBuy = null
+    }
+
   } else {
     const priceChange = (currentPrice - state.buyPrice) / state.buyPrice
     const saleValue = state.tradingBalance * (1 + priceChange)
@@ -250,6 +322,32 @@ async function sellCoin(state: BotState, currentPrice: number, reason: string): 
     state.currentCoin = null
     state.currentCoinSymbol = null
     state.buyPrice = null
+
+    // Record trade round
+    if (pendingBuy) {
+      const round: TradeRound = {
+        id: `round-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        coinId: pendingBuy.coinId,
+        coinSymbol: pendingBuy.coinSymbol,
+        buyPrice: pendingBuy.buyPrice,
+        sellPrice: currentPrice,
+        buyAmount: pendingBuy.buyAmount,
+        sellAmount: saleValue,
+        buyFee: pendingBuy.buyFee,
+        sellFee: fee,
+        totalFees: pendingBuy.buyFee + fee,
+        profit,
+        profitPercent: (profit / pendingBuy.buyAmount) * 100,
+        holdDurationMs: Date.now() - pendingBuy.buyTimestamp,
+        buyTimestamp: pendingBuy.buyTimestamp,
+        sellTimestamp: Date.now(),
+        buyReason: pendingBuy.buyReason,
+        sellReason: reason,
+        won: profit > 0,
+      }
+      tradeRounds.unshift(round)
+      pendingBuy = null
+    }
   }
 
   return state
