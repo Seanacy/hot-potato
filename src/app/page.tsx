@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { BotState, BotSettings, ProfitStep, ScannedCoin, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, DEFAULT_STEPS, BotNotification, Trade, TradeRound } from '@/lib/types'
 import { exportTradeHistory } from '@/lib/export'
+import { loadTradeRounds, saveTradeRounds, mergeTradeRounds } from '@/lib/trade-store'
 
 // ============================================
 // Status Badge
@@ -1013,6 +1014,21 @@ export default function Dashboard() {
           const data = await res.json()
           setState(data.state)
           if (data.scanResults) setScanResults(data.scanResults)
+
+          // Persist any new trade rounds from ticks
+          if (data.tradeRounds && data.tradeRounds.length > 0) {
+            const stored = loadTradeRounds()
+            const merged = mergeTradeRounds(stored, data.tradeRounds)
+            saveTradeRounds(merged)
+          }
+
+          // Auto-export when balance zeros out
+          if (data.justZeroedOut) {
+            const allRounds = loadTradeRounds()
+            if (allRounds.length > 0) {
+              exportTradeHistory(allRounds).catch(console.error)
+            }
+          }
         }
       }, state.settings.scanIntervalMs)
     }
@@ -1032,9 +1048,19 @@ export default function Dashboard() {
       setState(data.state)
       if (data.scanResults) setScanResults(data.scanResults)
 
+      // Persist any new trade rounds to localStorage
+      if (data.tradeRounds && data.tradeRounds.length > 0) {
+        const stored = loadTradeRounds()
+        const merged = mergeTradeRounds(stored, data.tradeRounds)
+        saveTradeRounds(merged)
+      }
+
       // Auto-export trade history when balance zeros out
-      if (data.justZeroedOut && data.tradeRounds && data.tradeRounds.length > 0) {
-        exportTradeHistory(data.tradeRounds).catch(console.error)
+      if (data.justZeroedOut) {
+        const allRounds = loadTradeRounds()
+        if (allRounds.length > 0) {
+          exportTradeHistory(allRounds).catch(console.error)
+        }
       }
     }
   }, [])
@@ -1147,15 +1173,11 @@ export default function Dashboard() {
         )}
         <button
           onClick={async () => {
-            // Auto-export trade history before resetting
+            // Auto-export from localStorage (full history, not just server)
             try {
-              const res = await fetch('/api/bot')
-              if (res.ok) {
-                const data = await res.json()
-                const rounds: TradeRound[] = data.tradeRounds || []
-                if (rounds.length > 0) {
-                  await exportTradeHistory(rounds)
-                }
+              const allRounds = loadTradeRounds()
+              if (allRounds.length > 0) {
+                await exportTradeHistory(allRounds)
               }
             } catch (err) {
               console.error('Auto-export failed:', err)

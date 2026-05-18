@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { TradeRound, BotState, DEFAULT_BOT_STATE } from '@/lib/types'
+import { loadTradeRounds, saveTradeRounds, mergeTradeRounds } from '@/lib/trade-store'
 
 // ============================================
 // Analytics calculations
@@ -279,13 +280,26 @@ export default function HistoryPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // Load from localStorage first (persisted history)
+        const stored = loadTradeRounds()
+
+        // Also grab any current server rounds and merge
         const res = await fetch('/api/bot')
         if (res.ok) {
           const data = await res.json()
           setState(data.state)
-          setRounds(data.tradeRounds || [])
+          const serverRounds: TradeRound[] = data.tradeRounds || []
+          const merged = mergeTradeRounds(stored, serverRounds)
+          saveTradeRounds(merged)
+          setRounds(merged)
+        } else {
+          // Server unavailable — still show stored history
+          setRounds(stored)
         }
-      } catch { /* ignore */ }
+      } catch {
+        // Offline — show whatever is in localStorage
+        setRounds(loadTradeRounds())
+      }
       setLoading(false)
     }
     fetchData()
