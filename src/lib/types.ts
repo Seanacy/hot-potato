@@ -110,6 +110,15 @@ export interface BotSettings {
   stagnantThreshold: number   // sell if price moves less than X% in recent window
   reversalThreshold: number   // sell if recent trend is below -X%
   minHoldBeforeBailMs: number // don't check stagnant/reversal until held this long (ms)
+
+  // Trailing stop
+  trailingStopPercent: number // sell if price drops X% from highest price since buy
+
+  // Take profit
+  takeProfitPercent: number   // sell when trade is up X% from buy price
+
+  // Cooldown
+  coinCooldownMs: number      // after selling a coin, don't re-buy it for this long (ms)
 }
 
 export const DEFAULT_SETTINGS: BotSettings = {
@@ -135,6 +144,9 @@ export const DEFAULT_SETTINGS: BotSettings = {
   stagnantThreshold: 0.02,
   reversalThreshold: 0.1,
   minHoldBeforeBailMs: 45000,
+  trailingStopPercent: 0.8,
+  takeProfitPercent: 1.5,
+  coinCooldownMs: 300000,
 }
 
 // ============================================
@@ -151,6 +163,8 @@ export interface BotState {
   currentCoinSymbol: string | null
   buyPrice: number | null
   buyTimestamp: number | null
+  peakPrice: number | null       // highest price since buy (for trailing stop)
+  coinCooldowns: Record<string, number> // coinId → timestamp when cooldown expires
   totalTrades: number
   totalProfit: number
   profitSinceLastLock: number
@@ -241,6 +255,8 @@ export const DEFAULT_BOT_STATE: BotState = {
   currentCoinSymbol: null,
   buyPrice: null,
   buyTimestamp: null,
+  peakPrice: null,
+  coinCooldowns: {},
   totalTrades: 0,
   totalProfit: 0,
   profitSinceLastLock: 0,

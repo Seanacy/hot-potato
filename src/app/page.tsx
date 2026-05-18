@@ -63,8 +63,19 @@ function CurrentPosition({ state }: { state: BotState }) {
         <div className="text-right">
           <p className="text-potato-muted text-xs">Buy price</p>
           <p className="text-lg text-potato-text">${state.buyPrice?.toFixed(4)}</p>
+          {state.peakPrice && state.buyPrice && state.peakPrice > state.buyPrice && (
+            <p className="text-potato-green text-xs">Peak: ${state.peakPrice.toFixed(4)}</p>
+          )}
         </div>
       </div>
+      {state.buyTimestamp && (
+        <div className="flex gap-4 mt-2 pt-2 border-t border-potato-border/30 text-xs text-potato-muted">
+          <span>Held: {Math.floor((Date.now() - state.buyTimestamp) / 1000)}s</span>
+          {Object.keys(state.coinCooldowns).length > 0 && (
+            <span>Cooldowns: {Object.keys(state.coinCooldowns).length} coins</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -904,6 +915,41 @@ function SettingsPanel({
           step={0.05}
           min={0.01}
           max={5}
+        />
+      </div>
+
+      {/* Section: Trailing Stop & Take Profit */}
+      <div className="p-4 border-b border-potato-border/30">
+        <p className="text-potato-accent text-xs font-medium mb-2 uppercase tracking-wider">Smart Exits</p>
+        <SettingRow
+          label="Take Profit"
+          hint="Sell when trade is up X% — ring the cash register"
+          value={draft.takeProfitPercent}
+          onChange={(v) => update('takeProfitPercent', v)}
+          suffix="%"
+          step={0.1}
+          min={0.1}
+          max={10}
+        />
+        <SettingRow
+          label="Trailing Stop"
+          hint="Sell if price drops X% from its highest point since buy"
+          value={draft.trailingStopPercent}
+          onChange={(v) => update('trailingStopPercent', v)}
+          suffix="%"
+          step={0.1}
+          min={0.1}
+          max={5}
+        />
+        <SettingRow
+          label="Coin Cooldown"
+          hint="After selling, don't re-buy same coin for X minutes"
+          value={draft.coinCooldownMs / 60000}
+          onChange={(v) => update('coinCooldownMs', v * 60000)}
+          suffix="min"
+          step={1}
+          min={0}
+          max={30}
         />
       </div>
 

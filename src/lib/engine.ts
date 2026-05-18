@@ -179,6 +179,7 @@ async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise
     state.currentCoinSymbol = coin.symbol
     state.buyPrice = filledPrice
     state.buyTimestamp = Date.now()
+    state.peakPrice = filledPrice
     state.coinHolding = filledSize
 
     // Save pending buy for trade round pairing
@@ -204,6 +205,7 @@ async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise
     state.currentCoinSymbol = coin.symbol
     state.buyPrice = coin.currentPrice
     state.buyTimestamp = Date.now()
+    state.peakPrice = coin.currentPrice
 
     // Save pending buy for trade round pairing
     pendingBuy = {
@@ -275,10 +277,16 @@ async function sellCoin(state: BotState, currentPrice: number, reason: string): 
     state.tradingBalance = netValue
     state.totalProfit += profit
     state.profitSinceLastLock += profit
+    // Set cooldown on this coin before clearing state
+    if (state.currentCoin) {
+      state.coinCooldowns[state.currentCoin] = Date.now() + state.settings.coinCooldownMs
+    }
+
     state.currentCoin = null
     state.currentCoinSymbol = null
     state.buyPrice = null
     state.buyTimestamp = null
+    state.peakPrice = null
     state.coinHolding = 0
 
     // Record trade round
@@ -322,10 +330,16 @@ async function sellCoin(state: BotState, currentPrice: number, reason: string): 
     state.tradingBalance = netValue
     state.totalProfit += profit
     state.profitSinceLastLock += profit
+    // Set cooldown on this coin before clearing state
+    if (state.currentCoin) {
+      state.coinCooldowns[state.currentCoin] = Date.now() + state.settings.coinCooldownMs
+    }
+
     state.currentCoin = null
     state.currentCoinSymbol = null
     state.buyPrice = null
     state.buyTimestamp = null
+    state.peakPrice = null
 
     // Record trade round
     if (pendingBuy) {
@@ -499,36 +513,105 @@ export async function tick(state: BotState): Promise<BotState> {
     log('coin_qualified', `${c.symbol} qualified`, `+${c.momentumScore.toFixed(2)}% momentum · $${c.currentPrice.toFixed(4)}`)
   })
 
-  // --- CHECK HELD COIN ---
-  if (state.currentCoin) {
-    const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
-
-    if (heldCoin) {
-      const bailCheck = shouldBail(heldCoin, state.buyPrice || 0, state.settings, state.buyTimestamp || 0)
-      if (bailCheck.bail) {
-        log('bail', `Bailing on ${heldCoin.symbol}`, bailCheck.reason)
-        state = await sellCoin(state, heldCoin.currentPrice, bailCheck.reason)
-        state = checkProfitLadder(state)
-        state = checkZeroOut(state)
-        if (state.status === 'paused') return state
-      } else {
-        log('hold', `Holding ${heldCoin.symbol} at $${heldCoin.currentPrice.toFixed(4)}`, bailCheck.reason)
-      }
-    } else {
-      log('bail', `${state.currentCoinSymbol} no longer qualifies — bailing`)
-      const anyData = scan.topCoins[0]
-      if (anyData && state.buyPrice) {
-        state = await sellCoin(state, state.buyPrice * 0.998, 'Coin no longer qualifies — bailing')
-        state = checkProfitLadder(state)
-        state = checkZeroOut(state)
-        if (state.status === 'paused') return state
-      }
+  // --- Clean up expired cooldowns ---
+  const now = Date.now()
+  for (const coinId of Object.keys(state.coinCooldowns)) {
+    if (state.coinCooldowns[coinId] <= now) {
+      delete state.coinCooldowns[coinId]
     }
   }
 
-  // --- BUY if not holding ---
+  // --- CHECK HELD COIN ---
+  if (state.currentCoin) {
+    // Find current price from scan (check all scanned, not just qualified)
+    const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
+    const heldFromAll = !heldCoin ? scan.allScanned.find((c) => c.id === state.currentCoin) : null
+    const currentPrice = heldCoin ? heldCoin.currentPrice : heldFromAll ? heldFromAll.currentPrice : null
+
+    if (currentPrice !== null && state.buyPrice) {
+      // Update peak price for trailing stop
+      if (state.peakPrice === null || currentPrice > state.peakPrice) {
+        state.peakPrice = currentPrice
+      }
+
+      const changeFromBuy = ((currentPrice - state.buyPrice) / state.buyPrice) * 100
+
+      // Take-profit check — ring the cash register
+      if (changeFromBuy >= state.settings.takeProfitPercent) {
+        log('sell', `Take profit! ${state.currentCoinSymbol} up ${changeFromBuy.toFixed(2)}%`, `Bought $${state.buyPrice.toFixed(4)} → Now $${currentPrice.toFixed(4)}`)
+        state = await sellCoin(state, currentPrice, `Take profit — up ${changeFromBuy.toFixed(2)}%`)
+        state = checkProfitLadder(state)
+        state = checkZeroOut(state)
+        if (state.status === 'paused') return state
+      }
+
+      // Trailing stop check — protect gains from reversing
+      if (state.currentCoin && state.peakPrice && state.peakPrice > state.buyPrice) {
+        const dropFromPeak = ((state.peakPrice - currentPrice) / state.peakPrice) * 100
+        if (dropFromPeak >= state.settings.trailingStopPercent) {
+          log('sell', `Trailing stop! ${state.currentCoinSymbol} dropped ${dropFromPeak.toFixed(2)}% from peak`, `Peak $${state.peakPrice.toFixed(4)} → Now $${currentPrice.toFixed(4)}`)
+          state = await sellCoin(state, currentPrice, `Trailing stop — dropped ${dropFromPeak.toFixed(2)}% from peak $${state.peakPrice.toFixed(4)}`)
+          state = checkProfitLadder(state)
+          state = checkZeroOut(state)
+          if (state.status === 'paused') return state
+        }
+      }
+
+      // Regular bail checks (stagnant, reversal, hard drop)
+      if (state.currentCoin && heldCoin) {
+        const bailCheck = shouldBail(heldCoin, state.buyPrice || 0, state.settings, state.buyTimestamp || 0)
+        if (bailCheck.bail) {
+          log('bail', `Bailing on ${heldCoin.symbol}`, bailCheck.reason)
+          state = await sellCoin(state, heldCoin.currentPrice, bailCheck.reason)
+          state = checkProfitLadder(state)
+          state = checkZeroOut(state)
+          if (state.status === 'paused') return state
+        } else {
+          log('hold', `Holding ${heldCoin.symbol} at $${heldCoin.currentPrice.toFixed(4)}`, bailCheck.reason)
+        }
+      } else if (state.currentCoin && !heldCoin) {
+        // Coin no longer in qualified list — still run bail checks with current price
+        const bailCheck = shouldBail(
+          { ...scan.allScanned[0], priceHistory: [] } as any,
+          state.buyPrice || 0, state.settings, state.buyTimestamp || 0
+        )
+        if (bailCheck.bail || (state.buyTimestamp && now - state.buyTimestamp > state.settings.minHoldBeforeBailMs)) {
+          log('bail', `${state.currentCoinSymbol} no longer qualifies — bailing`)
+          state = await sellCoin(state, currentPrice, 'Coin no longer qualifies — bailing')
+          state = checkProfitLadder(state)
+          state = checkZeroOut(state)
+          if (state.status === 'paused') return state
+        }
+      }
+    } else if (!currentPrice && state.buyPrice) {
+      // Can't find price at all — bail at slight loss
+      log('bail', `${state.currentCoinSymbol} disappeared from scan — bailing`)
+      state = await sellCoin(state, state.buyPrice * 0.998, 'Coin disappeared from scan — bailing')
+      state = checkProfitLadder(state)
+      state = checkZeroOut(state)
+      if (state.status === 'paused') return state
+    }
+  }
+
+  // --- BUY if not holding (respect cooldowns) ---
   if (!state.currentCoin && scan.bestOpportunity) {
-    state = await buyCoin(state, scan.bestOpportunity, 'Best momentum opportunity')
+    // Check if best opportunity is on cooldown
+    const cooldownExpiry = state.coinCooldowns[scan.bestOpportunity.id]
+    if (cooldownExpiry && cooldownExpiry > now) {
+      const secsLeft = Math.ceil((cooldownExpiry - now) / 1000)
+      log('idle', `Best coin ${scan.bestOpportunity.symbol} is on cooldown (${secsLeft}s left)`, 'Looking for alternatives...')
+
+      // Try to find next best coin not on cooldown
+      const alternative = scan.topCoins.find((c) => {
+        const cd = state.coinCooldowns[c.id]
+        return !cd || cd <= now
+      })
+      if (alternative) {
+        state = await buyCoin(state, alternative, `Best available (${scan.bestOpportunity.symbol} on cooldown)`)
+      }
+    } else {
+      state = await buyCoin(state, scan.bestOpportunity, 'Best momentum opportunity')
+    }
   } else if (!state.currentCoin && !scan.bestOpportunity) {
     log('idle', 'No opportunities found — waiting...')
   }
