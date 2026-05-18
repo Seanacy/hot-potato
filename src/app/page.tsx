@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { BotState, BotSettings, ProfitStep, ScannedCoin, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, DEFAULT_STEPS, BotNotification, Trade } from '@/lib/types'
+import { BotState, BotSettings, ProfitStep, ScannedCoin, DEFAULT_BOT_STATE, DEFAULT_SETTINGS, DEFAULT_STEPS, BotNotification, Trade, TradeRound } from '@/lib/types'
+import { exportTradeHistory } from '@/lib/export'
 
 // ============================================
 // Status Badge
@@ -1140,7 +1141,23 @@ export default function Dashboard() {
           </>
         )}
         <button
-          onClick={() => sendAction('reset')}
+          onClick={async () => {
+            // Auto-export trade history before resetting
+            try {
+              const res = await fetch('/api/bot')
+              if (res.ok) {
+                const data = await res.json()
+                const rounds: TradeRound[] = data.tradeRounds || []
+                if (rounds.length > 0) {
+                  await exportTradeHistory(rounds)
+                }
+              }
+            } catch (err) {
+              console.error('Auto-export failed:', err)
+            }
+            // Now reset
+            sendAction('reset')
+          }}
           className="px-4 py-3 rounded-xl bg-potato-surface border border-potato-border text-potato-muted text-sm hover:border-potato-red/50 hover:text-potato-red transition"
         >
           Reset
