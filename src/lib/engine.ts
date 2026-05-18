@@ -178,6 +178,7 @@ async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise
     state.currentCoin = coin.id
     state.currentCoinSymbol = coin.symbol
     state.buyPrice = filledPrice
+    state.buyTimestamp = Date.now()
     state.coinHolding = filledSize
 
     // Save pending buy for trade round pairing
@@ -202,6 +203,7 @@ async function buyCoin(state: BotState, coin: CoinData, reason: string): Promise
     state.currentCoin = coin.id
     state.currentCoinSymbol = coin.symbol
     state.buyPrice = coin.currentPrice
+    state.buyTimestamp = Date.now()
 
     // Save pending buy for trade round pairing
     pendingBuy = {
@@ -276,6 +278,7 @@ async function sellCoin(state: BotState, currentPrice: number, reason: string): 
     state.currentCoin = null
     state.currentCoinSymbol = null
     state.buyPrice = null
+    state.buyTimestamp = null
     state.coinHolding = 0
 
     // Record trade round
@@ -322,6 +325,7 @@ async function sellCoin(state: BotState, currentPrice: number, reason: string): 
     state.currentCoin = null
     state.currentCoinSymbol = null
     state.buyPrice = null
+    state.buyTimestamp = null
 
     // Record trade round
     if (pendingBuy) {
@@ -500,7 +504,7 @@ export async function tick(state: BotState): Promise<BotState> {
     const heldCoin = scan.topCoins.find((c) => c.id === state.currentCoin)
 
     if (heldCoin) {
-      const bailCheck = shouldBail(heldCoin, state.buyPrice || 0, state.settings)
+      const bailCheck = shouldBail(heldCoin, state.buyPrice || 0, state.settings, state.buyTimestamp || 0)
       if (bailCheck.bail) {
         log('bail', `Bailing on ${heldCoin.symbol}`, bailCheck.reason)
         state = await sellCoin(state, heldCoin.currentPrice, bailCheck.reason)

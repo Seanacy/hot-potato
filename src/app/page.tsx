@@ -876,6 +876,16 @@ function SettingsPanel({
           max={10}
         />
         <SettingRow
+          label="Min Hold Time"
+          hint="Wait this long before checking stagnant/reversal"
+          value={draft.minHoldBeforeBailMs / 1000}
+          onChange={(v) => update('minHoldBeforeBailMs', v * 1000)}
+          suffix="sec"
+          step={5}
+          min={0}
+          max={300}
+        />
+        <SettingRow
           label="Stagnant Threshold"
           hint="Sell if coin moves less than X%"
           value={draft.stagnantThreshold}

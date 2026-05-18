@@ -109,13 +109,14 @@ export interface BotSettings {
   bailPercent: number         // sell if price drops X% from buy price
   stagnantThreshold: number   // sell if price moves less than X% in recent window
   reversalThreshold: number   // sell if recent trend is below -X%
+  minHoldBeforeBailMs: number // don't check stagnant/reversal until held this long (ms)
 }
 
 export const DEFAULT_SETTINGS: BotSettings = {
   tradingMode: 'paper',
   seedAmount: 10,
   tradeFeePercent: 0.006,
-  feeMultiplier: 2,
+  feeMultiplier: 3,
   ladderMode: 'simple',
   simpleProfitTarget: 5,
   simpleLockAmount: 2.5,
@@ -131,8 +132,9 @@ export const DEFAULT_SETTINGS: BotSettings = {
   maxVolatilityRatio: 0.4,
   minPricePoints: 6,
   bailPercent: 0.5,
-  stagnantThreshold: 0.1,
+  stagnantThreshold: 0.02,
   reversalThreshold: 0.1,
+  minHoldBeforeBailMs: 45000,
 }
 
 // ============================================
@@ -148,6 +150,7 @@ export interface BotState {
   currentCoin: string | null
   currentCoinSymbol: string | null
   buyPrice: number | null
+  buyTimestamp: number | null
   totalTrades: number
   totalProfit: number
   profitSinceLastLock: number
@@ -237,6 +240,7 @@ export const DEFAULT_BOT_STATE: BotState = {
   currentCoin: null,
   currentCoinSymbol: null,
   buyPrice: null,
+  buyTimestamp: null,
   totalTrades: 0,
   totalProfit: 0,
   profitSinceLastLock: 0,

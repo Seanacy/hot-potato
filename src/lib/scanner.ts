@@ -228,9 +228,10 @@ export async function scanMarket(settings?: BotSettings): Promise<ScanResult> {
 // ============================================
 // Check if current coin should be abandoned (uses settings)
 // ============================================
-export function shouldBail(coin: CoinData, buyPrice: number, settings?: BotSettings): { bail: boolean; reason: string } {
+export function shouldBail(coin: CoinData, buyPrice: number, settings?: BotSettings, buyTimestamp?: number): { bail: boolean; reason: string } {
   const s = settings || DEFAULT_SETTINGS
   const now = Date.now()
+  const holdTime = buyTimestamp ? now - buyTimestamp : Infinity
   const recentWindow = 15000
   const recentPrices = coin.priceHistory.filter((p) => p.timestamp >= now - recentWindow)
 
@@ -241,8 +242,15 @@ export function shouldBail(coin: CoinData, buyPrice: number, settings?: BotSetti
   const currentPrice = recentPrices[recentPrices.length - 1].price
   const changeFromBuy = ((currentPrice - buyPrice) / buyPrice) * 100
 
+  // Always bail on hard drops regardless of hold time
   if (changeFromBuy < -s.bailPercent) {
     return { bail: true, reason: `Price dropped ${changeFromBuy.toFixed(2)}% from buy price` }
+  }
+
+  // Don't check stagnant/reversal until minimum hold time has passed
+  if (holdTime < s.minHoldBeforeBailMs) {
+    const secsLeft = Math.ceil((s.minHoldBeforeBailMs - holdTime) / 1000)
+    return { bail: false, reason: `Holding — ${secsLeft}s until bail checks activate` }
   }
 
   const oldest = recentPrices[0].price
