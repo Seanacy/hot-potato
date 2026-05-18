@@ -1031,6 +1031,11 @@ export default function Dashboard() {
       const data = await res.json()
       setState(data.state)
       if (data.scanResults) setScanResults(data.scanResults)
+
+      // Auto-export trade history when balance zeros out
+      if (data.justZeroedOut && data.tradeRounds && data.tradeRounds.length > 0) {
+        exportTradeHistory(data.tradeRounds).catch(console.error)
+      }
     }
   }, [])
 

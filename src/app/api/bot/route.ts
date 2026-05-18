@@ -11,8 +11,21 @@ let botState: BotState = { ...DEFAULT_BOT_STATE }
 // Last scan results for the Scanner tab
 let lastScanCoins: ScannedCoin[] = []
 
+// Track previous status to detect zero-out transitions
+let previousStatus = ''
+
 function buildResponse() {
-  return { state: botState, scanResults: lastScanCoins, activity: getActivityLog(), tradeRounds: getTradeRounds() }
+  // Detect if the bot just zeroed out this tick
+  const justZeroedOut = previousStatus === 'running' && botState.status === 'paused' && botState.tradingBalance <= 0.01
+  previousStatus = botState.status
+
+  return {
+    state: botState,
+    scanResults: lastScanCoins,
+    activity: getActivityLog(),
+    tradeRounds: getTradeRounds(),
+    justZeroedOut,
+  }
 }
 
 // GET — return current bot state + scan data + activity log
