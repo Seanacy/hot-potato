@@ -232,7 +232,7 @@ export function shouldBail(coin: CoinData, buyPrice: number, settings?: BotSetti
   const s = settings || DEFAULT_SETTINGS
   const now = Date.now()
   const holdTime = buyTimestamp ? now - buyTimestamp : Infinity
-  const recentWindow = 15000
+  const recentWindow = 30000
   const recentPrices = coin.priceHistory.filter((p) => p.timestamp >= now - recentWindow)
 
   if (recentPrices.length < 3) {
