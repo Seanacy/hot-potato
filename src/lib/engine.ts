@@ -546,7 +546,7 @@ export async function tick(state: BotState): Promise<BotState> {
       }
 
       // Trailing stop check — protect gains from reversing
-      if (state.currentCoin && state.peakPrice && state.peakPrice > state.buyPrice) {
+      if (state.currentCoin && state.peakPrice && state.buyPrice && state.peakPrice > state.buyPrice) {
         const dropFromPeak = ((state.peakPrice - currentPrice) / state.peakPrice) * 100
         if (dropFromPeak >= state.settings.trailingStopPercent) {
           log('sell', `Trailing stop! ${state.currentCoinSymbol} dropped ${dropFromPeak.toFixed(2)}% from peak`, `Peak $${state.peakPrice.toFixed(4)} → Now $${currentPrice.toFixed(4)}`)
