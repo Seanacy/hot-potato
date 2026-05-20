@@ -125,7 +125,7 @@ export const DEFAULT_SETTINGS: BotSettings = {
   tradingMode: 'paper',
   seedAmount: 10,
   tradeFeePercent: 0.006,
-  feeMultiplier: 3,
+  feeMultiplier: 5,
   ladderMode: 'simple',
   simpleProfitTarget: 5,
   simpleLockAmount: 2.5,
@@ -134,8 +134,8 @@ export const DEFAULT_SETTINGS: BotSettings = {
   watchlist: [],
   scanIntervalMs: 10000,
   trendWindowSec: 120,
-  minTrendSec: 45,
-  minVolumeUsd: 500000,
+  minTrendSec: 90,
+  minVolumeUsd: 2000000,
   maxSpikePercent: 5,
   spikeWindowSec: 10,
   maxVolatilityRatio: 0.4,
@@ -146,7 +146,7 @@ export const DEFAULT_SETTINGS: BotSettings = {
   minHoldBeforeBailMs: 120000,
   trailingStopPercent: 0.8,
   takeProfitPercent: 1.5,
-  coinCooldownMs: 300000,
+  coinCooldownMs: 600000,
 }
 
 // ============================================
